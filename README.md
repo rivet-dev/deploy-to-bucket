@@ -34,6 +34,10 @@ credentials. Otherwise, ask me for the credentials or access you need.
 
 Content-hashed `_astro/` assets are shared across releases so older browser tabs can load their original files while those releases are retained. Other builds must configure `immutablePrefixes` for their hashed assets; never reuse an immutable filename for different content. This action does **not** implement framework-aware version-skew protection such as [Next.js deployment-ID detection and automatic reloads](https://nextjs.org/docs/app/guides/self-hosting#version-skew).
 
+### Media
+
+HTTP Range requests are not supported. Host video, audio, and large downloads that need seeking or partial downloads on a separate asset service.
+
 ### Workflows
 
 **`.github/workflows/website.yml`**
