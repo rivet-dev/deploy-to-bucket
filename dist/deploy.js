@@ -19,7 +19,7 @@ export async function main() {
             !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(value) ||
             value.length > 253 ||
             value.split(".").some((label) => label.length > 63))
-            throw new Error("domain and preview-domain must be valid hostnames without a scheme or path");
+            throw new Error("domain, preview-domain, and branch-domain must be valid hostnames without a scheme or path");
         return value;
     };
     const domain = hostname(env.SITE_DOMAIN?.toLowerCase());
@@ -37,7 +37,9 @@ export async function main() {
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 128)
         throw new Error("upload-concurrency must be an integer between 1 and 128");
     const event = JSON.parse(await readFile(requiredEnv("GITHUB_EVENT_PATH"), "utf8"));
-    const plan = deployment(event, env, domain, env.SITE_MAIN || "main", previewDomain);
+    const plan = deployment(event, env, domain, env.SITE_MAIN || "main", previewDomain, env.SITE_BRANCH_DOMAIN
+        ? hostname(env.SITE_BRANCH_DOMAIN.toLowerCase())
+        : undefined);
     async function assertCurrent() {
         if (!env.GH_TOKEN)
             throw new Error("github-token is required for stale-run checks");

@@ -13,6 +13,7 @@ export function deployment(
 	domain: string,
 	main: string,
 	previewDomain: string,
+	branchDomain?: string,
 ) {
 	const pr = event.pull_request;
 	if (pr && pr.head.repo.full_name !== env.GITHUB_REPOSITORY)
@@ -37,7 +38,25 @@ export function deployment(
 		: pr
 			? `pr-${pr.number}`
 			: `branch-${hash(branch).slice(0, 16)}`;
-	const hostname = production ? domain : `${target}.${previewDomain}`;
+	if (branchDomain) {
+		if (production || pr)
+			throw new Error(
+				"branch-domain is only valid for non-production branch deployments",
+			);
+		const label = branchDomain.slice(0, -(previewDomain.length + 1));
+		if (
+			branchDomain === domain ||
+			branchDomain === previewDomain ||
+			(branchDomain.endsWith(`.${previewDomain}`) &&
+				/^(?:pr-|branch-|production-r-)/.test(label))
+		)
+			throw new Error(
+				"branch-domain conflicts with a production or generated preview hostname",
+			);
+	}
+	const hostname = production
+		? domain
+		: branchDomain || `${target}.${previewDomain}`;
 	if (
 		hostname.length > 253 ||
 		hostname.split(".").some((label) => label.length > 63)

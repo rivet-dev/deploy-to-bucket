@@ -264,4 +264,23 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	await main();
 	assert.equal(objects.has("hosts/pr-7.site.gameinc.io.json"), false);
 	assert.equal(objects.get("hosts/site.gameinc.io.json"), production);
+	// A named staging branch publishes its own manifest and assets, never production.
+	Object.assign(process.env, {
+		GITHUB_EVENT_NAME: "push",
+		GITHUB_REF_NAME: "main",
+		SITE_MAIN: "prod",
+		SITE_BRANCH_DOMAIN: "staging.gameinc.io",
+		GITHUB_RUN_ID: "999",
+	});
+	await writeFile(eventPath, "{}");
+	await main();
+	const staging = JSON.parse(objects.get("hosts/staging.gameinc.io.json")!);
+	assert.equal(staging.target, "branch-0d6e4079e36703eb");
+	assert.equal(staging.preview, true);
+	assert.ok(objects.has(`sites/${staging.target}/assets/_astro/app.a1.js`));
+	assert.equal(objects.get("hosts/site.gameinc.io.json"), production);
+	assert.equal(
+		objects.has(`hosts/${staging.target}.site.gameinc.io.json`),
+		false,
+	);
 });

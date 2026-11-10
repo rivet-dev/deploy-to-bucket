@@ -38,7 +38,7 @@ export async function main() {
 			value.split(".").some((label) => label.length > 63)
 		)
 			throw new Error(
-				"domain and preview-domain must be valid hostnames without a scheme or path",
+				"domain, preview-domain, and branch-domain must be valid hostnames without a scheme or path",
 			);
 		return value;
 	};
@@ -69,6 +69,9 @@ export async function main() {
 		domain,
 		env.SITE_MAIN || "main",
 		previewDomain,
+		env.SITE_BRANCH_DOMAIN
+			? hostname(env.SITE_BRANCH_DOMAIN.toLowerCase())
+			: undefined,
 	);
 	async function assertCurrent() {
 		if (!env.GH_TOKEN)

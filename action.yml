@@ -19,6 +19,9 @@ inputs:
     domain:
         description: Production hostname already routed to the Worker
         required: true
+    branch-domain:
+        description: Optional hostname for a non-production branch deployment; omit for PRs and production
+        default: ""
     upload-concurrency:
         description: Maximum parallel uploads (1-128)
         default: "32"
@@ -66,6 +69,7 @@ runs:
               R2_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
               SITE_PREVIEW_DOMAIN: ${{ inputs.preview-domain }}
               SITE_DOMAIN: ${{ inputs.domain }}
+              SITE_BRANCH_DOMAIN: ${{ inputs.branch-domain }}
               SITE_UPLOAD_CONCURRENCY: ${{ inputs.upload-concurrency }}
               SITE_DIRECTORY: ${{ inputs.directory }}
               SITE_WORKDIR: ${{ inputs.working-directory }}

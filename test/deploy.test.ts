@@ -128,3 +128,68 @@ test("cleanup removes every batch and only the selected PR; retry is harmless", 
 	assert.deepEqual([...keys], ["sites/pr-40/x", "sites/production/x"]);
 	await assert.rejects(cleanup(store, "production", []));
 });
+
+test("explicit branch host preserves storage isolation and rejects reserved hosts", () => {
+	const env = {
+		GITHUB_REPOSITORY: "example/site",
+		GITHUB_EVENT_NAME: "push",
+		GITHUB_REF_NAME: "main",
+	};
+	const plan = (host: string, overrides = {}) =>
+		planDeployment(
+			{},
+			{ ...env, ...overrides },
+			"site.gameinc.io",
+			"prod",
+			"preview.gameinc.io",
+			host,
+		);
+	const staging = plan("staging.gameinc.io");
+	assert.equal(staging.hostname, "staging.gameinc.io");
+	assert.equal(staging.target, "branch-0d6e4079e36703eb");
+	assert.equal(staging.production, false);
+	assert.equal(
+		planDeployment(
+			{ ref: "main" },
+			{ ...env, GITHUB_EVENT_NAME: "delete" },
+			"site.gameinc.io",
+			"prod",
+			"preview.gameinc.io",
+			"staging.gameinc.io",
+		).hostname,
+		staging.hostname,
+	);
+	for (const host of [
+		"site.gameinc.io",
+		"preview.gameinc.io",
+		"pr-7.preview.gameinc.io",
+		"production-r-1-1.preview.gameinc.io",
+		"branch-0d6e4079e36703eb.preview.gameinc.io",
+	])
+		assert.throws(() => plan(host), /conflicts/);
+	assert.throws(
+		() => plan("staging.gameinc.io", { GITHUB_REF_NAME: "prod" }),
+		/only valid/,
+	);
+	assert.throws(
+		() =>
+			planDeployment(
+				{
+					pull_request: {
+						number: 7,
+						head: {
+							ref: "main",
+							sha: "abc",
+							repo: { full_name: "example/site" },
+						},
+					},
+				},
+				{ ...env, GITHUB_EVENT_NAME: "pull_request" },
+				"site.gameinc.io",
+				"prod",
+				"preview.gameinc.io",
+				"staging.gameinc.io",
+			),
+		/only valid/,
+	);
+});

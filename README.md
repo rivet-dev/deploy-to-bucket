@@ -121,6 +121,8 @@ jobs:
 
 Keep the same concurrency group and hostname in both workflows. Cleanup runs without a checkout or build.
 
+To give a non-production branch a stable hostname, set `branch-domain` only on that branch's push runs (for example, `staging.example.com`). Provision its routing and TLS first. Branch storage stays isolated from production; PR names remain `pr-N`. Leave this input empty for production and PRs.
+
 For `rivet-dev/website`, follow the [integration guide](SETUP.md#4-integrate-and-verify).
 
 ## License
