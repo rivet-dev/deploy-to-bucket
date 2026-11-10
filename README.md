@@ -9,6 +9,23 @@ Deploy static websites from CI to Cloudflare R2.
 - Use better caching, faster machines, and self-hosted runners.
 - Serve cheaply from object storage.
 
+## Features
+
+- Production domains, PR previews, and a separate URL for each release.
+- PR comments with preview links; automatic asset cleanup when PRs close.
+- Parallel uploads, retries, and reuse of unchanged content-hashed assets.
+- Shared hashed assets keep older tabs working while their releases are retained. Defaults to `_astro/`; configure `immutablePrefixes` for other builds. Never reuse an immutable filename for different content.
+- Seven-day retention after replacing production releases, with cleanup on subsequent deployments. The active release is always kept.
+- Configurable redirects, headers, SPA fallback, and proxy routes.
+
+## Not supported
+
+- Server-side rendering or application server runtimes; deploy static build output only.
+- Framework-aware version-skew protection such as [Next.js deployment-ID detection and automatic reloads](https://nextjs.org/docs/app/guides/self-hosting#version-skew).
+- HTTP Range requests. Host media needing seeking or partial downloads on a separate asset service.
+- Previews from forked PRs; only trusted same-repository PRs deploy.
+- Worker edge caching or background cache refresh. Immutable assets have browser caching.
+
 ## Agent prompt
 
 ```text
@@ -29,14 +46,6 @@ credentials. Otherwise, ask me for the credentials or access you need.
 ### ACM requirement
 
 **Nested preview hostnames require ACM or equivalent certificate coverage.** For `pr-42.preview.gameinc.io`, provision a certificate for `*.preview.gameinc.io`. Cloudflare Universal SSL already covers first-level names such as `pr-42.gameinc.io`; a wildcard DNS record alone does not extend that coverage.
-
-### Version skew
-
-Content-hashed `_astro/` assets are shared across releases so older browser tabs can load their original files while those releases are retained. Other builds must configure `immutablePrefixes` for their hashed assets; never reuse an immutable filename for different content. This action does **not** implement framework-aware version-skew protection such as [Next.js deployment-ID detection and automatic reloads](https://nextjs.org/docs/app/guides/self-hosting#version-skew).
-
-### Media
-
-HTTP Range requests are not supported. Host video, audio, and large downloads that need seeking or partial downloads on a separate asset service.
 
 ### Workflows
 
