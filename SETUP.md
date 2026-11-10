@@ -8,6 +8,8 @@ Infer the repository, production hostname, account, and output directory from co
 
 Inspect existing hosting, redirects, headers, and proxy routes. Preserve unrelated DNS and Workers. Stage on an unused hostname first; changing a currently served production hostname is a separate cutover.
 
+The production domain may also be the preview suffix: `domain: dashboard.gameinc.io` and `preview-domain: dashboard.gameinc.io` produce `pr-42.dashboard.gameinc.io`. Production must not itself be a hostname inside the preview suffix. This arrangement requires a version containing this support; `v0.1.0` rejects equal domain inputs.
+
 ## 2. Provision hosting outside CI
 
 1. Enable R2 if needed and create a private bucket, for example `example-website`. Leave public R2 access disabled. Record its account ID and bucket name. This action uses the default R2 jurisdiction endpoint.

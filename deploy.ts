@@ -44,9 +44,9 @@ export async function main() {
 	};
 	const domain = hostname(env.SITE_DOMAIN?.toLowerCase());
 	const previewDomain = hostname(env.SITE_PREVIEW_DOMAIN?.toLowerCase());
-	if (domain === previewDomain || domain.endsWith(`.${previewDomain}`))
+	if (domain.endsWith(`.${previewDomain}`))
 		throw new Error(
-			"Use a dedicated preview-domain outside the production hostname namespace",
+			"Production domain must not be inside the preview hostname namespace",
 		);
 	if (!/^[a-f0-9]{32}$/.test(env.R2_ACCOUNT_ID ?? ""))
 		throw new Error("account-id must be a Cloudflare account ID");

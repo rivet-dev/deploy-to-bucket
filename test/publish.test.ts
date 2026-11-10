@@ -168,6 +168,9 @@ test("bucket-only API contract: publish, comments and cleanup without management
 		throw Error(`Unexpected API call: ${method} ${url}`);
 	};
 	const savedKey = process.env.R2_SECRET_ACCESS_KEY;
+	process.env.SITE_DOMAIN = "pr-7.preview.gameinc.io";
+	await assert.rejects(main(), /Production domain must not be inside/);
+	process.env.SITE_DOMAIN = "site.gameinc.io";
 	delete process.env.R2_SECRET_ACCESS_KEY;
 	await assert.rejects(main(), /Bucket-scoped/);
 	process.env.R2_SECRET_ACCESS_KEY = savedKey;
@@ -243,4 +246,22 @@ test("bucket-only API contract: publish, comments and cleanup without management
 		),
 		JSON.parse(objects.get(inventoryKey)!),
 	);
+	// A production hostname can also be the parent of every preview hostname.
+	process.env.SITE_PREVIEW_DOMAIN = "site.gameinc.io";
+	process.env.GITHUB_RUN_ATTEMPT = "3";
+	await main();
+	const production = objects.get("hosts/site.gameinc.io.json");
+	assert.ok(production);
+	Object.assign(process.env, { GITHUB_EVENT_NAME: "pull_request", GITHUB_RUN_ID: "789" });
+	pr.state = "open";
+	event.action = "reopened";
+	await writeFile(eventPath, JSON.stringify(event));
+	await main();
+	assert.ok(objects.has("hosts/pr-7.site.gameinc.io.json"));
+	pr.state = "closed";
+	event.action = "closed";
+	await writeFile(eventPath, JSON.stringify(event));
+	await main();
+	assert.equal(objects.has("hosts/pr-7.site.gameinc.io.json"), false);
+	assert.equal(objects.get("hosts/site.gameinc.io.json"), production);
 });
