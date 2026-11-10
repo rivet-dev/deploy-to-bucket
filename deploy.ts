@@ -9,11 +9,24 @@ import {
 	DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import mime from "mime-types";
-import { deployment, publish, cleanup } from "./core.mjs";
+import { deployment, publish, cleanup } from "./core.js";
+
+import type {
+	GitHubEvent,
+	GitHubComment,
+	ObjectStore,
+	RoutingConfig,
+	UploadFile,
+} from "./types.js";
 
 const env = process.env;
+function requiredEnv(name: string): string {
+	const value = env[name];
+	if (!value) throw new Error(`Missing environment variable: ${name}`);
+	return value;
+}
 export async function main() {
-	const hostname = (value) => {
+	const hostname = (value: string | undefined) => {
 		if (
 			!value ||
 			!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(value) ||
@@ -40,7 +53,9 @@ export async function main() {
 		throw new Error(
 			"Bucket-scoped R2 access-key-id and secret-access-key are required; follow SETUP.md",
 		);
-	const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, "utf8"));
+	const event: GitHubEvent = JSON.parse(
+		await readFile(requiredEnv("GITHUB_EVENT_PATH"), "utf8"),
+	);
 	const plan = deployment(
 		event,
 		env,
@@ -53,7 +68,7 @@ export async function main() {
 			throw new Error("github-token is required for stale-run checks");
 		const endpoint = plan.pr
 			? `pulls/${plan.pr}`
-			: `commits/${encodeURIComponent(plan.remove ? event.ref : env.GITHUB_REF_NAME)}`;
+			: `commits/${encodeURIComponent(plan.remove ? (event.ref ?? "") : requiredEnv("GITHUB_REF_NAME"))}`;
 		const response = await fetch(
 			`${env.GITHUB_API_URL || "https://api.github.com"}/repos/${env.GITHUB_REPOSITORY}/${endpoint}`,
 			{
@@ -72,13 +87,18 @@ export async function main() {
 		}
 		if (!response.ok)
 			throw new Error(`Cannot check current ref (${response.status})`);
-		const current = await response.json();
+		const current = (await response.json()) as {
+			state?: string;
+			head?: { sha: string };
+			sha?: string;
+		};
 		if (
 			plan.pr
 				? plan.remove
 					? current.state !== "closed"
 					: current.state !== "open" ||
-						current.head.sha !== event.pull_request.head.sha
+						!current.head?.sha ||
+						current.head.sha !== event.pull_request?.head.sha
 				: current.sha !== env.GITHUB_SHA
 		)
 			throw new Error(
@@ -87,7 +107,7 @@ export async function main() {
 	}
 	await assertCurrent();
 	const workdir = resolve(env.SITE_WORKDIR || ".");
-	const config =
+	const config: RoutingConfig =
 		env.SITE_CONFIG && !plan.remove
 			? JSON.parse(
 					await readFile(resolve(workdir, env.SITE_CONFIG), "utf8"),
@@ -137,19 +157,18 @@ export async function main() {
 		},
 		maxAttempts: 5,
 	});
-	const store = {
+	const store: ObjectStore = {
 		put: async (key, body, type) => {
 			// Open streams here, so only the current bounded upload batch holds descriptors.
 			const data =
-				typeof body === "object" && body.file
-					? createReadStream(body.file)
-					: body;
+				typeof body === "object" ? createReadStream(body.file) : body;
 			await s3.send(
 				new PutObjectCommand({
 					Bucket: bucket,
 					Key: key,
 					Body: data,
-					ContentLength: body?.size,
+					ContentLength:
+						typeof body === "object" ? body.size : undefined,
 					ContentType: type,
 				}),
 			);
@@ -163,7 +182,7 @@ export async function main() {
 						MaxKeys: 1000,
 					}),
 				)
-			).Contents?.map((o) => o.Key) ?? [],
+			).Contents?.flatMap((o) => (o.Key ? [o.Key] : [])) ?? [],
 		delete: async (keys) => {
 			const result = await s3.send(
 				new DeleteObjectsCommand({
@@ -177,10 +196,14 @@ export async function main() {
 				);
 		},
 	};
-	const comment = async (removed) => {
+	const comment = async (removed: boolean) => {
 		if (!plan.pr || !env.GH_TOKEN) return;
 		const base = `${env.GITHUB_API_URL || "https://api.github.com"}/repos/${env.GITHUB_REPOSITORY}`;
-		async function gh(path, method = "GET", body) {
+		async function gh<T = unknown>(
+			path: string,
+			method = "GET",
+			body?: { body: string },
+		): Promise<T> {
 			const res = await fetch(base + path, {
 				method,
 				headers: {
@@ -195,12 +218,12 @@ export async function main() {
 				throw new Error(
 					`GitHub comment failed (${res.status}); deployment state has already been updated`,
 				);
-			return res.json();
+			return (await res.json()) as T;
 		}
 		const marker = `<!-- deploy-to-bucket:${bucket}:${domain} -->`;
-		let existing;
+		let existing: GitHubComment | undefined;
 		for (let page = 1; ; page++) {
-			const batch = await gh(
+			const batch = await gh<GitHubComment[]>(
 				`/issues/${plan.pr}/comments?per_page=100&page=${page}`,
 			);
 			existing = batch.find(
@@ -208,7 +231,7 @@ export async function main() {
 			);
 			if (existing || batch.length < 100) break;
 		}
-		const body = `${marker}\n${removed ? "Preview removed; R2 assets deleted." : `Website preview: https://${plan.hostname}\n\nRelease: https://${releaseHost}\n\nCommit: ${event.pull_request.head.sha}`}`;
+		const body = `${marker}\n${removed ? "Preview removed; R2 assets deleted." : `Website preview: https://${plan.hostname}\n\nRelease: https://${releaseHost}\n\nCommit: ${event.pull_request?.head.sha}`}`;
 		await gh(
 			existing
 				? `/issues/comments/${existing.id}`
@@ -224,8 +247,8 @@ export async function main() {
 	}
 	const output = resolve(workdir, env.SITE_DIRECTORY || "dist");
 	const prefix = `sites/${plan.target}/releases/${release}/`;
-	const files = [];
-	async function walk(dir) {
+	const files: UploadFile[] = [];
+	async function walk(dir: string): Promise<void> {
 		for (const name of await readdir(dir)) {
 			const file = resolve(dir, name),
 				stat = await lstat(file);
@@ -249,9 +272,10 @@ export async function main() {
 				key:
 					(immutable ? `sites/${plan.target}/assets/` : prefix) + key,
 				body: { file, size: stat.size },
-				type: mime.contentType(
-					mime.lookup(key) || "application/octet-stream",
-				),
+				type:
+					mime.contentType(
+						mime.lookup(key) || "application/octet-stream",
+					) || "application/octet-stream",
 			});
 		}
 	}
@@ -272,7 +296,7 @@ export async function main() {
 		"application/json",
 	);
 	await appendFile(
-		env.GITHUB_OUTPUT,
+		requiredEnv("GITHUB_OUTPUT"),
 		`url=https://${plan.hostname}\nrelease-url=https://${releaseHost}\n`,
 	);
 	if (env.GITHUB_STEP_SUMMARY)

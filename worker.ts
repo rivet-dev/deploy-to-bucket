@@ -1,3 +1,4 @@
+import type { Manifest } from "./types.js";
 // Each hostname resolves to one manifest; no build is visible before publication.
 export default {
 	async fetch(request, env) {
@@ -8,7 +9,7 @@ export default {
 				status: 404,
 				headers: { "Cache-Control": "no-store" },
 			});
-		const site = await manifest.json();
+		const site = await manifest.json<Manifest>();
 		const config = site.config ?? {};
 		const headers = new Headers({
 			"X-Content-Type-Options": "nosniff",
@@ -16,7 +17,11 @@ export default {
 			"Cache-Control": "no-cache",
 		});
 		if (site.preview) headers.set("X-Robots-Tag", "noindex, nofollow");
-		const reply = (body, status = 200, extra = {}) => {
+		const reply = (
+			body: BodyInit | null,
+			status = 200,
+			extra: Record<string, string> = {},
+		) => {
 			const h = new Headers(headers);
 			for (const [k, v] of Object.entries(extra)) h.set(k, v);
 			if (status >= 400) h.set("Cache-Control", "no-store");
@@ -25,7 +30,7 @@ export default {
 				headers: h,
 			});
 		};
-		const redirect = (target, status = 301) => {
+		const redirect = (target: string, status = 301) => {
 			const dest = new URL(target, url);
 			if (!dest.search) dest.search = url.search;
 			return reply(null, status, { Location: dest.href });
@@ -124,7 +129,7 @@ export default {
 				return redirect(`${url.pathname}/`);
 		}
 		let status = 200;
-		if (!object && config.spa && !key.split("/").pop().includes("."))
+		if (!object && config.spa && !key.split("/").pop()?.includes("."))
 			object = await env.BUCKET.get(site.prefix + "index.html");
 		if (!object) {
 			status = 404;
@@ -132,7 +137,8 @@ export default {
 		}
 		if (!object) return reply("Not found", 404);
 		object.writeHttpMetadata(headers);
-		headers.set("ETag", object.httpEtag);
+		const etag = object.httpEtag;
+		headers.set("ETag", etag);
 		headers.set(
 			"Cache-Control",
 			status === 404
@@ -146,13 +152,9 @@ export default {
 			request.headers
 				.get("If-None-Match")
 				?.split(/,\s*/)
-				.some(
-					(tag) =>
-						tag === "*" ||
-						tag.replace(/^W\//, "") === object.httpEtag,
-				)
+				.some((tag) => tag === "*" || tag.replace(/^W\//, "") === etag)
 		)
 			return reply(null, 304);
 		return reply(object.body, status);
 	},
-};
+} satisfies ExportedHandler<Env>;

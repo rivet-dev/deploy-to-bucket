@@ -11,7 +11,7 @@ Inspect existing hosting, redirects, headers, and proxy routes. Preserve unrelat
 ## 2. Provision hosting outside CI
 
 1. Enable R2 if needed and create a private bucket, for example `example-website`. Leave public R2 access disabled. Record its account ID and bucket name. This action uses the default R2 jurisdiction endpoint.
-2. Deploy this repository's `worker.mjs` as an ES module Worker with an R2 binding named **`BUCKET`** pointing to that bucket. Use the dashboard or copy `wrangler.example.jsonc` to a local `wrangler.jsonc`, replace every example value, and run `wrangler deploy --config wrangler.jsonc`. Keep the config for future manual Worker upgrades; uploading a website does not update the Worker.
+2. Deploy this repository's `worker.ts` as an ES module Worker with an R2 binding named **`BUCKET`** pointing to that bucket. For a dashboard upload, use the compiled `dist/worker.js`. With Wrangler, run `npm ci` in this repository, copy `wrangler.example.jsonc` to a local `wrangler.jsonc`, replace every example value, and run `npx wrangler deploy --config wrangler.jsonc`. Keep the config for future manual Worker upgrades; uploading a website does not update the Worker.
 3. Attach the production hostname as a **Worker custom domain**. Cloudflare provisions its DNS and certificate. Inspect existing records first; do not overwrite another service's records. Attach any production alias or proxy hostname the routing config uses to the same Worker as well.
 4. Add a **proxied wildcard DNS record** for `*.preview.gameinc.io`. With no origin server, a proxied A record pointing to the documentation address `192.0.2.1` can back the Worker route. Do not modify a zone-wide wildcard or unrelated records.
 5. Add a **Worker route** for `*.preview.gameinc.io/*` in the correct zone, targeting this Worker. This is a route, not a wildcard custom domain: Worker custom domains do not support wildcards. The Wrangler example includes this route.
@@ -41,7 +41,7 @@ The CI token needs object upload, read/list, and delete access so it can publish
 
 Add the deployment and cleanup workflows from [README.md](README.md), adjusting the build and output directory to the repository. Keep their concurrency groups identical. Only trusted same-repository PRs deploy.
 
-For `rivet-dev/website`, use [the pnpm example](examples/website.yml) and [cleanup workflow](examples/website-cleanup.yml). Copy [the routing adapter](examples/website-config.mjs) into `scripts/website-config.mjs`; run it after the build and pass `config: website-routing.json`. Set up alias/proxy hostnames before enabling them in the routing config. The MCP backend must remain running at a reachable HTTPS origin.
+For `rivet-dev/website`, use [the pnpm example](examples/website.yml) and [cleanup workflow](examples/website-cleanup.yml). Copy [the routing adapter](examples/website-config.ts) into `scripts/website-config.ts`; run it after the build and pass `config: website-routing.json`. Set up alias/proxy hostnames before enabling them in the routing config. The MCP backend must remain running at a reachable HTTPS origin.
 
 Verify HTTPS to an arbitrary unused preview hostname returns the Worker's `404` with `Cache-Control: no-store`, without a certificate error. Then run the workflow on the test hostname: check the production URL, a PR preview, its fixed release URL, redirects, assets, and PR comment. Close the PR and confirm its objects are gone and both preview URLs return `404`. **The shared wildcard DNS, route, certificate, Worker, and bucket remain.**
 

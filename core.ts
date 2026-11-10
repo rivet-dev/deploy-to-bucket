@@ -1,6 +1,19 @@
 import { createHash } from "node:crypto";
-export const hash = (value) => createHash("sha256").update(value).digest("hex");
-export function deployment(event, env, domain, main, previewDomain) {
+import type {
+	GitHubEvent,
+	Manifest,
+	ObjectStore,
+	UploadFile,
+} from "./types.js";
+export const hash = (value: string) =>
+	createHash("sha256").update(value).digest("hex");
+export function deployment(
+	event: GitHubEvent,
+	env: NodeJS.ProcessEnv,
+	domain: string,
+	main: string,
+	previewDomain: string,
+) {
 	const pr = event.pull_request;
 	if (pr && pr.head.repo.full_name !== env.GITHUB_REPOSITORY)
 		throw new Error(
@@ -8,7 +21,7 @@ export function deployment(event, env, domain, main, previewDomain) {
 		);
 	if (
 		!["push", "pull_request", "delete", "workflow_dispatch"].includes(
-			env.GITHUB_EVENT_NAME,
+			env.GITHUB_EVENT_NAME ?? "",
 		)
 	)
 		throw new Error(
@@ -17,6 +30,7 @@ export function deployment(event, env, domain, main, previewDomain) {
 	const branch =
 		pr?.head.ref ??
 		(env.GITHUB_EVENT_NAME === "delete" ? event.ref : env.GITHUB_REF_NAME);
+	if (!branch) throw new Error("Missing GitHub branch name");
 	const production = !pr && branch === main;
 	const target = production
 		? "production"
@@ -37,10 +51,10 @@ export function deployment(event, env, domain, main, previewDomain) {
 	return { target, hostname, production, remove, pr: pr?.number };
 }
 export async function publish(
-	store,
-	files,
-	manifest,
-	hosts,
+	store: Pick<ObjectStore, "put">,
+	files: UploadFile[],
+	manifest: Manifest,
+	hosts: string[],
 	beforePublish = async () => {},
 ) {
 	// Upload completion is the publication barrier. A failed build/upload never changes a host.
@@ -59,7 +73,11 @@ export async function publish(
 			"application/json",
 		);
 }
-export async function cleanup(store, target, hosts) {
+export async function cleanup(
+	store: Pick<ObjectStore, "list" | "delete">,
+	target: string,
+	hosts: string[],
+) {
 	if (
 		target === "production" ||
 		!/^(pr-\d+|branch-[a-f0-9]{16})$/.test(target)

@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { Miniflare } from "miniflare";
+import { Miniflare, type Request } from "miniflare";
 test("real Worker/R2: isolation, redirects, metadata, 404s, CORS, HEAD and publication", async (t) => {
 	const mf = new Miniflare({
 		modules: true,
 		script: await readFile(
-			new URL("../worker.mjs", import.meta.url),
+			new URL("../dist/worker.js", import.meta.url),
 			"utf8",
 		),
 		compatibilityDate: "2026-07-30",
@@ -39,7 +39,7 @@ test("real Worker/R2: isolation, redirects, metadata, 404s, CORS, HEAD and publi
 	await bucket.put("sites/pr-42/assets/_astro/old.js", "old chunk", {
 		httpMetadata: { contentType: "application/javascript" },
 	});
-	const get = (path, init) =>
+	const get = (path: string, init?: Parameters<typeof mf.dispatchFetch>[1]) =>
 		mf.dispatchFetch(`https://${host}${path}`, {
 			redirect: "manual",
 			...init,
@@ -60,8 +60,9 @@ test("real Worker/R2: isolation, redirects, metadata, 404s, CORS, HEAD and publi
 	assert.equal(res.headers.get("Cache-Control"), "no-store");
 	assert.equal(await res.text(), "custom missing");
 	res = await get("/_astro/old.js");
-	assert.match(res.headers.get("Cache-Control"), /immutable/);
+	assert.match(res.headers.get("Cache-Control") ?? "", /immutable/);
 	const etag = res.headers.get("ETag");
+	assert.ok(etag);
 	assert.equal(
 		(await get("/_astro/old.js", { headers: { "If-None-Match": etag } }))
 			.status,
@@ -105,16 +106,21 @@ test("real Worker/R2: isolation, redirects, metadata, 404s, CORS, HEAD and publi
 });
 
 test("production aliases and MCP proxy preserve requests and upstream redirects", async (t) => {
-	const received = [];
+	const received: {
+		url: string;
+		method: string;
+		body: string;
+		auth: string | null;
+	}[] = [];
 	const mf = new Miniflare({
 		modules: true,
 		script: await readFile(
-			new URL("../worker.mjs", import.meta.url),
+			new URL("../dist/worker.js", import.meta.url),
 			"utf8",
 		),
 		compatibilityDate: "2026-07-30",
 		r2Buckets: ["BUCKET"],
-		outboundService: async (request) => {
+		outboundService: async (request: Request) => {
 			received.push({
 				url: request.url,
 				method: request.method,

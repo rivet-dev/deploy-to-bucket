@@ -50,7 +50,7 @@ runs:
               ACTION_PATH: ${{ github.action_path }}
           run: |
               action_dir=$(mktemp -d "$RUNNER_TEMP/r2-website.XXXXXX")
-              cp "$ACTION_PATH/"*.mjs "$ACTION_PATH/package.json" "$ACTION_PATH/package-lock.json" "$action_dir/"
+              cp "$ACTION_PATH/dist/"*.js "$ACTION_PATH/package.json" "$ACTION_PATH/package-lock.json" "$action_dir/"
               npm ci --omit=dev --ignore-scripts --prefix "$action_dir" --workspaces=false
               echo "R2_ACTION_DIR=$action_dir" >> "$GITHUB_ENV"
         - name: Deploy or clean up
@@ -68,4 +68,4 @@ runs:
               SITE_MAIN: ${{ inputs.main-branch }}
               SITE_CONFIG: ${{ inputs.config }}
               GH_TOKEN: ${{ inputs.github-token }}
-          run: node "$R2_ACTION_DIR/deploy.mjs"
+          run: node "$R2_ACTION_DIR/deploy.js"

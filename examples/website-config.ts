@@ -2,10 +2,23 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-const { redirects, wildcardRedirects } = await import(
-	pathToFileURL(resolve("redirects.mjs"))
-);
+const {
+	redirects,
+	wildcardRedirects,
+}: {
+	redirects: Record<string, string>;
+	wildcardRedirects: { from: string; to: string }[];
+} = await import(pathToFileURL(resolve("redirects.mjs")).href);
+const aliases: string[] = [];
+const proxies: {
+	host: string;
+	origin: string;
+	root: string;
+	paths: string[];
+}[] = [];
 const config = {
+	aliases,
+	proxies,
 	canonicalOrigin: "https://rivet.dev",
 	redirects: { ...redirects, "/mcp": "/docs/mcp/" },
 	wildcards: wildcardRedirects.map(({ from, to }) => ({

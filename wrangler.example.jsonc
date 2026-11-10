@@ -1,7 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "example-website-router",
-	"main": "worker.mjs",
+	"main": "worker.ts",
 	"account_id": "REPLACE_WITH_ACCOUNT_ID",
 	"compatibility_date": "2026-11-09",
 	"workers_dev": false,

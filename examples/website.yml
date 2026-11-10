@@ -32,7 +32,7 @@ jobs:
                   pnpm check:sitemap
                   pnpm build
                   pnpm check:seo
-                  node scripts/website-config.mjs
+                  pnpm exec tsx scripts/website-config.ts
               env:
                   PUBLIC_SITE_URL: https://rivet.dev
                   PUBLIC_POSTHOG_KEY: ${{ vars.PUBLIC_POSTHOG_KEY }}

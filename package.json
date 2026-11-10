@@ -4,14 +4,23 @@
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
+    "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.worker.json --noEmit",
+    "types:worker": "wrangler types --config wrangler.example.jsonc --include-runtime false",
+    "test": "npm run build && npm run typecheck && tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1165.0",
     "mime-types": "3.0.1"
   },
   "devDependencies": {
-    "miniflare": "4.20260730.0"
+    "@cloudflare/workers-types": "5.20261110.1",
+    "@types/mime-types": "3.0.1",
+    "@types/node": "22.20.5",
+    "miniflare": "4.20260730.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "wrangler": "4.159.0"
   },
   "overrides": {
     "miniflare": {

@@ -3,8 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { S3Client } from "@aws-sdk/client-s3";
-import { main } from "../deploy.mjs";
+import {
+	S3Client,
+	PutObjectCommand,
+	ListObjectsV2Command,
+	DeleteObjectsCommand,
+} from "@aws-sdk/client-s3";
+import { Readable } from "node:stream";
+import type { GitHubComment } from "../types.js";
+import { main } from "../deploy.js";
 
 test("bucket-only API contract: publish, comments and cleanup without management access", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "r2-action-test-"));
@@ -55,41 +62,61 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	});
 	let postComments = 0,
 		patchComments = 0;
-	const objects = new Map(),
-		comments = [];
-	S3Client.prototype.send = async function (command) {
-		const credentials = await this.config.credentials();
-		assert.equal(credentials.accessKeyId, "synthetic-access-key");
-		assert.equal(credentials.secretAccessKey, "synthetic-secret-key");
-		const input = command.input;
-		assert.equal(input.Bucket, "example-site");
-		switch (command.constructor.name) {
-			case "PutObjectCommand": {
-				let body = input.Body;
-				if (typeof body !== "string") {
-					const parts = [];
-					for await (const part of body) parts.push(part);
-					body = Buffer.concat(parts).toString();
+	const objects = new Map<string, string>();
+	const comments: GitHubComment[] = [];
+	t.mock.method(
+		S3Client.prototype,
+		"send",
+		async function (
+			this: S3Client,
+			command:
+				PutObjectCommand | ListObjectsV2Command | DeleteObjectsCommand,
+		) {
+			const credentials = await this.config.credentials();
+			assert.equal(credentials.accessKeyId, "synthetic-access-key");
+			assert.equal(credentials.secretAccessKey, "synthetic-secret-key");
+			const input = command.input;
+			assert.equal(input.Bucket, "example-site");
+			switch (true) {
+				case command instanceof PutObjectCommand: {
+					const input = command.input;
+					assert.ok(input.Key);
+					let body = input.Body;
+					if (typeof body !== "string") {
+						assert.ok(body instanceof Readable);
+						const parts: Buffer[] = [];
+						for await (const part of body) parts.push(part);
+						body = Buffer.concat(parts).toString();
+					}
+					objects.set(input.Key, body);
+					return {};
 				}
-				objects.set(input.Key, body);
-				return {};
+				case command instanceof ListObjectsV2Command: {
+					const input = command.input;
+					return {
+						Contents: [...objects.keys()]
+							.filter((k) => k.startsWith(input.Prefix ?? ""))
+							.slice(0, input.MaxKeys)
+							.map((Key) => ({ Key })),
+					};
+				}
+				case command instanceof DeleteObjectsCommand:
+					command.input.Delete?.Objects?.forEach((o) => {
+						assert.ok(o.Key);
+						objects.delete(o.Key);
+					});
+					return {};
+				default:
+					throw Error("Unexpected storage command");
 			}
-			case "ListObjectsV2Command":
-				return {
-					Contents: [...objects.keys()]
-						.filter((k) => k.startsWith(input.Prefix))
-						.slice(0, input.MaxKeys)
-						.map((Key) => ({ Key })),
-				};
-			case "DeleteObjectsCommand":
-				input.Delete.Objects.forEach((o) => objects.delete(o.Key));
-				return {};
-			default:
-				throw Error(command.constructor.name);
-		}
-	};
+		},
+	);
 	globalThis.fetch = async (input, options = {}) => {
-		const url = new URL(input),
+		const url = new URL(
+				typeof input === "string" || input instanceof URL
+					? input
+					: input.url,
+			),
 			path = url.pathname,
 			method = options.method || "GET";
 		if (url.hostname === "api.github.com") {
@@ -98,16 +125,18 @@ test("bucket-only API contract: publish, comments and cleanup without management
 				return Response.json(comments);
 			if (method === "POST") {
 				postComments++;
+				assert.equal(typeof options.body, "string");
 				comments.push({
 					id: 1,
 					user: { type: "Bot" },
-					...JSON.parse(options.body),
+					...JSON.parse(String(options.body)),
 				});
 				return Response.json({});
 			}
 			if (method === "PATCH") {
 				patchComments++;
-				comments[0].body = JSON.parse(options.body).body;
+				assert.equal(typeof options.body, "string");
+				comments[0].body = JSON.parse(String(options.body)).body;
 				return Response.json({});
 			}
 		}
@@ -128,7 +157,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	await main();
 	assert.equal(postComments, 1);
 	assert.match(
-		objects.get("hosts/pr-7.preview.gameinc.io.json"),
+		objects.get("hosts/pr-7.preview.gameinc.io.json") ?? "",
 		/releases\/123-1/,
 	);
 	process.env.GITHUB_RUN_ATTEMPT = "2";

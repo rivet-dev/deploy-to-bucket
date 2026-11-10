@@ -15,5 +15,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run types:worker -- --check
       - run: npm test
+      - run: |
+          git diff --exit-code -- dist
+          test -z "$(git ls-files --others --exclude-standard dist)"
       - run: npm audit --omit=dev
