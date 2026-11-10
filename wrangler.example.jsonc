@@ -8,8 +8,6 @@
 	"preview_urls": false,
 	"observability": { "enabled": true },
 	"r2_buckets": [{ "binding": "BUCKET", "bucket_name": "example-website" }],
-	"routes": [
-		{ "pattern": "website.gameinc.io", "custom_domain": true },
-		{ "pattern": "*.preview.gameinc.io/*", "zone_name": "gameinc.io" },
-	],
+	// The action manages exact Custom Domains. Omit routes so future Worker
+	// upgrades preserve dynamically attached production and preview hostnames.
 }

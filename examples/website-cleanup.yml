@@ -16,8 +16,11 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - uses: rivet-dev/deploy-to-bucket@v0.1.0
+            - uses: rivet-dev/deploy-to-bucket@main
               with:
+                  cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  zone-id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+                  worker: ${{ vars.WEBSITE_WORKER }}
                   access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
                   secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
                   account-id: ${{ vars.R2_ACCOUNT_ID }}

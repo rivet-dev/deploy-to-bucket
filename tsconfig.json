@@ -11,5 +11,5 @@
 		"rootDir": ".",
 		"outDir": "dist"
 	},
-	"include": ["core.ts", "deploy.ts", "types.ts"]
+	"include": ["core.ts", "deploy.ts", "domains.ts", "types.ts"]
 }

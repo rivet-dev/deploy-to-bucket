@@ -12,8 +12,10 @@ import {
 import { Readable } from "node:stream";
 import type { GitHubComment } from "../types.js";
 import { main } from "../deploy.js";
+import { CloudflareMock, zoneId, worker } from "./cloudflare.js";
 
-test("bucket-only API contract: publish, comments and cleanup without management access", async (t) => {
+test("publish, on-demand hostnames, comments and cleanup without bucket administration", async (t) => {
+	const cf = new CloudflareMock();
 	const dir = await mkdtemp(join(tmpdir(), "r2-action-test-"));
 	const originalEnv = { ...process.env },
 		originalFetch = globalThis.fetch,
@@ -43,6 +45,10 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	Object.assign(process.env, {
 		R2_ACCOUNT_ID: "a".repeat(32),
 		R2_BUCKET: "example-site",
+		CF_ZONE_ID: zoneId,
+		CF_WORKER: worker,
+		CF_API_TOKEN: "synthetic-cf-token",
+		SITE_HOSTNAME_TIMEOUT: "1",
 		R2_ACCESS_KEY_ID: "synthetic-access-key",
 		R2_SECRET_ACCESS_KEY: "synthetic-secret-key",
 		SITE_PREVIEW_DOMAIN: "preview.gameinc.io",
@@ -140,7 +146,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 				return Response.json({});
 			}
 		}
-		throw Error(`Unexpected API call: ${method} ${url}`);
+		return cf.fetch(input, options);
 	};
 	const savedKey = process.env.R2_SECRET_ACCESS_KEY;
 	delete process.env.R2_SECRET_ACCESS_KEY;
@@ -152,10 +158,21 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	};
 	await assert.rejects(main(), /NoSuchBucket/);
 	assert.equal(objects.size, 0);
+	assert.equal(cf.requests.length, 0);
 	assert.equal(postComments, 0);
 	S3Client.prototype.send = objectOnlySend;
+	cf.failHostname = "pr-7.preview.gameinc.io";
+	await assert.rejects(main(), /HTTP 403/);
+	assert.ok(objects.has("sites/pr-7/releases/123-1/index.html"));
+	assert.ok(![...objects.keys()].some((key) => key.startsWith("hosts/")));
+	assert.equal(postComments, 0);
+	cf.failHostname = undefined;
 	await main();
 	assert.equal(postComments, 1);
+	assert.deepEqual(
+		[...cf.domains.keys()],
+		["pr-7.preview.gameinc.io", "pr-7-r-123-1.preview.gameinc.io"],
+	);
 	assert.match(
 		objects.get("hosts/pr-7.preview.gameinc.io.json") ?? "",
 		/releases\/123-1/,
@@ -171,8 +188,15 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	event.action = "closed";
 	await writeFile(eventPath, JSON.stringify(event));
 	process.env.SITE_CONFIG = "missing-generated-config.json";
+	cf.failDelete = "pr-7-r-123-1.preview.gameinc.io";
+	await assert.rejects(main(), /HTTP 403/);
+	assert.deepEqual([...objects.keys()], ["sites/production/keep"]);
+	assert.ok(cf.domains.size > 0);
+	cf.failDelete = undefined;
 	await main();
 	assert.equal(patchComments, 2);
+	assert.equal(cf.domains.size, 0);
+	assert.equal(cf.dns.size, 0);
 	assert.deepEqual([...objects.keys()], ["sites/production/keep"]);
 	await main();
 });

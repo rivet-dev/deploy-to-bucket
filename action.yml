@@ -13,11 +13,23 @@ inputs:
     secret-access-key:
         description: Secret key paired with the bucket-scoped access key
         required: true
+    cloudflare-token:
+        description: Cloudflare token for exact Worker custom domains (see SETUP.md)
+        required: true
+    zone-id:
+        description: Cloudflare zone containing all website hostnames
+        required: true
+    worker:
+        description: Existing router Worker name
+        required: true
+    hostname-timeout:
+        description: Seconds to wait for DNS and HTTPS readiness (1-3600)
+        default: "600"
     preview-domain:
-        description: Preview suffix with wildcard DNS, Worker routing, and TLS already configured
+        description: Dedicated preview suffix; exact hostnames are created on demand
         required: true
     domain:
-        description: Production hostname already routed to the Worker
+        description: Production hostname to attach to the Worker
         required: true
     directory:
         description: Build output directory relative to working-directory
@@ -57,6 +69,10 @@ runs:
           id: deploy
           shell: bash
           env:
+              CF_API_TOKEN: ${{ inputs.cloudflare-token }}
+              CF_ZONE_ID: ${{ inputs.zone-id }}
+              CF_WORKER: ${{ inputs.worker }}
+              SITE_HOSTNAME_TIMEOUT: ${{ inputs.hostname-timeout }}
               R2_ACCOUNT_ID: ${{ inputs.account-id }}
               R2_BUCKET: ${{ inputs.bucket }}
               R2_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
