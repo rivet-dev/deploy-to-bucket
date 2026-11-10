@@ -5,10 +5,53 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { createServer } from "node:http";
 import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { publish } from "../core.js";
-import { listAssets, unchangedAssets } from "../uploads.js";
+import { listAssets, unchangedAssets, uploadObject } from "../uploads.js";
 import type { UploadFile } from "../types.js";
+
+test("streamed uploads replay complete files on transient errors, stop at five attempts, and fail fast on 403", { timeout: 20000 }, async (t) => {
+	const dir = await mkdtemp(join(tmpdir(), "upload-retry-"));
+	t.after(() => rm(dir, { recursive: true }));
+	const path = join(dir, "asset.js");
+	const bytes = Buffer.from("complete upload body\n".repeat(10000));
+	await writeFile(path, bytes);
+	let status = 503;
+	const received: Buffer[] = [];
+	const server = createServer(async (request, response) => {
+		const parts: Buffer[] = [];
+		for await (const chunk of request) parts.push(chunk);
+		received.push(Buffer.concat(parts));
+		const code = status === 0 ? (received.length < 3 ? 503 : 200) : status;
+		response.writeHead(code, { "Content-Type": "application/xml" });
+		response.end(code === 200 ? "" : `<Error><Code>${code === 403 ? "AccessDenied" : "SlowDown"}</Code></Error>`);
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+	const address = server.address();
+	assert.ok(address && typeof address !== "string");
+	const client = new S3Client({
+		region: "auto", endpoint: `http://127.0.0.1:${address.port}`, forcePathStyle: true,
+		credentials: { accessKeyId: "synthetic", secretAccessKey: "synthetic" },
+		maxAttempts: 5, requestChecksumCalculation: "WHEN_REQUIRED",
+	});
+	t.after(() => client.destroy());
+	const upload = () => uploadObject(client, "example-site", "asset.js", { file: path, size: bytes.length }, "application/javascript");
+	status = 0;
+	await upload();
+	assert.equal(received.length, 3);
+	for (const body of received) assert.deepEqual(body, bytes);
+	received.length = 0;
+	status = 403;
+	await assert.rejects(upload(), { name: "AccessDenied" });
+	assert.equal(received.length, 1);
+	received.length = 0;
+	status = 503;
+	await assert.rejects(upload(), { name: "SlowDown" });
+	assert.equal(received.length, 5);
+	for (const body of received) assert.deepEqual(body, bytes);
+});
 
 const manifest = {
 	target: "production",

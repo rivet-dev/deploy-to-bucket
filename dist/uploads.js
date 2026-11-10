@@ -1,7 +1,41 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { setTimeout } from "node:timers/promises";
+import { ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
 import { forEachConcurrent } from "./core.js";
+function retryable(error) {
+    if (!error || typeof error !== "object")
+        return false;
+    const e = error;
+    const status = e.$metadata?.httpStatusCode;
+    return !!e.$retryable || status === 408 || status === 429 ||
+        (status !== undefined && status >= 500 && status <= 599) ||
+        ["ECONNRESET", "ECONNREFUSED", "EPIPE", "ETIMEDOUT", "EAI_AGAIN", "ENETUNREACH", "TimeoutError", "RequestTimeout", "SlowDown"].includes(e.code ?? e.name ?? "");
+}
+export async function uploadObject(s3, bucket, key, body, type) {
+    // Strings are replayable: the SDK handles their retries itself.
+    if (typeof body === "string") {
+        await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: type }));
+        return;
+    }
+    // The SDK cannot replay Readables. Reopen the file on each attempt, while
+    // holding the same pool slot so retries do not exceed upload concurrency.
+    for (let attempt = 0;; attempt++) {
+        const stream = createReadStream(body.file);
+        try {
+            await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: stream, ContentLength: body.size, ContentType: type }));
+            return;
+        }
+        catch (error) {
+            if (attempt >= 4 || !retryable(error))
+                throw error;
+        }
+        finally {
+            stream.destroy();
+        }
+        await setTimeout(Math.random() * Math.min(8000, 500 * 2 ** attempt));
+    }
+}
 export async function* listAssets(s3, bucket, prefix) {
     let token;
     for (;;) {

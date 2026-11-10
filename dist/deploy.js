@@ -1,11 +1,10 @@
 import { readFile, readdir, lstat, appendFile } from "node:fs/promises";
-import { createReadStream } from "node:fs";
 import { resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, } from "@aws-sdk/client-s3";
+import { S3Client, ListObjectsV2Command, DeleteObjectsCommand, } from "@aws-sdk/client-s3";
 import mime from "mime-types";
 import { deployment, publish, cleanup } from "./core.js";
-import { listAssets, unchangedAssets } from "./uploads.js";
+import { listAssets, unchangedAssets, uploadObject } from "./uploads.js";
 const env = process.env;
 function requiredEnv(name) {
     const value = env[name];
@@ -115,17 +114,7 @@ export async function main() {
         },
     });
     const store = {
-        put: async (key, body, type) => {
-            // Open streams lazily: only active uploads hold file descriptors.
-            const data = typeof body === "object" ? createReadStream(body.file) : body;
-            await s3.send(new PutObjectCommand({
-                Bucket: bucket,
-                Key: key,
-                Body: data,
-                ContentLength: typeof body === "object" ? body.size : undefined,
-                ContentType: type,
-            }));
-        },
+        put: (key, body, type) => uploadObject(s3, bucket, key, body, type),
         list: async (prefix) => (await s3.send(new ListObjectsV2Command({
             Bucket: bucket,
             Prefix: prefix,
