@@ -24,7 +24,7 @@ credentials. Otherwise, ask me for the credentials or access you need.
 
 1. Have your agent complete the [one-time setup guide](SETUP.md). It provisions hosting and creates R2 Object Read & Write credentials scoped to one bucket. CI gets no Cloudflare management permissions.
 2. Save the two secrets and four repository variables listed in the setup guide.
-3. Add the workflows below and adjust your build command and output directory. Use `@v2`, or pin a release commit SHA.
+3. Add the workflows below and adjust your build command and output directory. Use `@v0.1.0`, or pin a release commit SHA.
 
 **`.github/workflows/website.yml`**
 
@@ -54,7 +54,7 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
-      - uses: rivet-dev/deploy-to-bucket@v2
+      - uses: rivet-dev/deploy-to-bucket@v0.1.0
         with:
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -86,7 +86,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: rivet-dev/deploy-to-bucket@v2
+      - uses: rivet-dev/deploy-to-bucket@v0.1.0
         with:
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}

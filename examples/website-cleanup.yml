@@ -16,7 +16,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - uses: rivet-dev/deploy-to-bucket@v2
+            - uses: rivet-dev/deploy-to-bucket@v0.1.0
               with:
                   access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
                   secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}

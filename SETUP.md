@@ -47,8 +47,4 @@ Verify HTTPS to an arbitrary unused preview hostname returns the Worker's `404` 
 
 Before any production cutover, verify the site's required routing behavior on the test hostname. CI can update files anywhere in its one bucket, including production; use separate buckets and credentials if production and previews need separate trust boundaries.
 
-## Existing v1 installations
-
-`v2` replaces `cloudflare-token` with the bucket-scoped inputs above. Provision the wildcard preview suffix, update both workflows together, and remove the old broad Cloudflare token from GitHub Actions. If reusing a v1 bucket, explicitly set `R2_BUCKET` to it; existing production content remains readable. Old v1 previews use individually provisioned hostnames: retire their custom-domain bindings and associated certificates during the migration. v2 never performs that administrative cleanup. Fixed v1 release links need to stay configured if you want to preserve them.
-
 References: [R2 token scopes](https://developers.cloudflare.com/r2/api/tokens/), [Worker routes](https://developers.cloudflare.com/workers/configuration/routing/routes/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Universal SSL coverage](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/).
