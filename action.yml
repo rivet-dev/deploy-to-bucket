@@ -1,0 +1,55 @@
+name: Deploy to Bucket
+description: Publish a built static website with production and PR hostnames
+inputs:
+    cloudflare-token:
+        description: Cloudflare user API token (Workers Scripts Edit, R2 Storage Edit, Zone Read, DNS Edit, Workers Routes Edit)
+        required: true
+    domain:
+        description: Production hostname in an existing Cloudflare zone
+        required: true
+    directory:
+        description: Build output directory relative to working-directory
+        default: dist
+    working-directory:
+        description: Website directory
+        default: .
+    main-branch:
+        description: Production branch
+        default: main
+    config:
+        description: Optional JSON routing configuration relative to working-directory
+        default: ""
+    github-token:
+        description: Token for PR comments
+        default: ${{ github.token }}
+outputs:
+    url:
+        description: Published URL
+        value: ${{ steps.deploy.outputs.url }}
+    release-url:
+        description: Immutable release URL
+        value: ${{ steps.deploy.outputs.release-url }}
+runs:
+    using: composite
+    steps:
+        - name: Prepare action
+          shell: bash
+          env:
+              ACTION_PATH: ${{ github.action_path }}
+          run: |
+              action_dir=$(mktemp -d "$RUNNER_TEMP/r2-website.XXXXXX")
+              cp "$ACTION_PATH/"*.mjs "$ACTION_PATH/package.json" "$ACTION_PATH/package-lock.json" "$action_dir/"
+              npm ci --omit=dev --ignore-scripts --prefix "$action_dir" --workspaces=false
+              echo "R2_ACTION_DIR=$action_dir" >> "$GITHUB_ENV"
+        - name: Deploy or clean up
+          id: deploy
+          shell: bash
+          env:
+              CF_TOKEN: ${{ inputs.cloudflare-token }}
+              SITE_DOMAIN: ${{ inputs.domain }}
+              SITE_DIRECTORY: ${{ inputs.directory }}
+              SITE_WORKDIR: ${{ inputs.working-directory }}
+              SITE_MAIN: ${{ inputs.main-branch }}
+              SITE_CONFIG: ${{ inputs.config }}
+              GH_TOKEN: ${{ inputs.github-token }}
+          run: node "$R2_ACTION_DIR/deploy.mjs"

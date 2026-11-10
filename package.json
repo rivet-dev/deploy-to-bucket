@@ -1,0 +1,22 @@
+{
+  "name": "deploy-to-bucket",
+  "private": true,
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1165.0",
+    "mime-types": "3.0.1"
+  },
+  "devDependencies": {
+    "miniflare": "4.20260730.0"
+  },
+  "overrides": {
+    "miniflare": {
+      "undici": "7.30.2",
+      "sharp": "0.35.5"
+    }
+  }
+}

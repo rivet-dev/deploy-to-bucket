@@ -1,0 +1,49 @@
+name: Website
+on:
+    push:
+        branches: [main]
+    pull_request:
+        types: [opened, synchronize, reopened]
+permissions:
+    contents: read
+    pull-requests: write
+# Match website-cleanup.yml so cleanup waits for active uploads.
+concurrency:
+    group: website-r2-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: false
+jobs:
+    website:
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  persist-credentials: false
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10.13.1
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+            - name: Build and check website
+              run: |
+                  pnpm install --frozen-lockfile
+                  pnpm assemble
+                  pnpm check:sitemap
+                  pnpm build
+                  pnpm check:seo
+                  node scripts/website-config.mjs
+              env:
+                  PUBLIC_SITE_URL: https://rivet.dev
+                  PUBLIC_POSTHOG_KEY: ${{ vars.PUBLIC_POSTHOG_KEY }}
+                  PUBLIC_POSTHOG_HOST: ${{ vars.PUBLIC_POSTHOG_HOST }}
+                  PUBLIC_TYPESENSE_HOST: ${{ vars.PUBLIC_TYPESENSE_HOST }}
+                  PUBLIC_TYPESENSE_SEARCH_API_KEY: ${{ vars.PUBLIC_TYPESENSE_SEARCH_API_KEY }}
+                  PUBLIC_TYPESENSE_COLLECTION_NAME: ${{ vars.PUBLIC_TYPESENSE_COLLECTION_NAME }}
+            - name: Publish website
+              uses: rivet-dev/deploy-to-bucket@v1
+              with:
+                  cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  domain: website.gameinc.io
+                  config: website-routing.json
+                  directory: dist
