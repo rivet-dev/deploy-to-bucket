@@ -49,4 +49,10 @@ Before any production cutover, verify the site's required routing behavior on th
 
 Uploads default to **32 concurrent requests**. Set `upload-concurrency` (1–128) to tune it for your runner and connection. The action reports file counts, bytes, elapsed upload time, and reused assets. It compares size and checksum to skip unchanged files under `immutablePrefixes` (default `["_astro/"]`); only put content-hashed assets in these prefixes. HTML and other release files are always uploaded before the domain switches. These upload improvements are on `main`; `v0.1.0` keeps the original uploader.
 
+### Cleanup
+
+Closing a PR deletes all of its releases and assets. Each successful production deployment also removes expired production releases and their fixed URLs. The active release is always kept; a replaced release is kept for at least seven days after replacement. Shared assets are deleted only when they are older than seven days and no retained release references them. Old failed uploads are collected too.
+
+This is cleanup on deployment, not an R2 expiration rule: during periods without deployments, objects remain longer. Do not enable blanket seven-day expiration on the bucket; it could delete files still used by the live website. Retained releases made by older action versions lack asset inventories, so shared asset deletion waits until those releases expire. Cleanup failures emit a warning and retry on the next production deployment; they do not undo a successful publication. These changes are on `main`, not `v0.1.0`.
+
 References: [R2 token scopes](https://developers.cloudflare.com/r2/api/tokens/), [Worker routes](https://developers.cloudflare.com/workers/configuration/routing/routes/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Universal SSL coverage](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/).

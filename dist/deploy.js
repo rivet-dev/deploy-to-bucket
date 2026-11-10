@@ -5,6 +5,7 @@ import { S3Client, ListObjectsV2Command, DeleteObjectsCommand, } from "@aws-sdk/
 import mime from "mime-types";
 import { deployment, publish, cleanup } from "./core.js";
 import { listAssets, unchangedAssets, uploadObject } from "./uploads.js";
+import { INVENTORY_FILE, pruneProduction, retainPreviousProduction, } from "./retention.js";
 const env = process.env;
 function requiredEnv(name) {
     const value = env[name];
@@ -189,7 +190,8 @@ export async function main() {
             files.push({
                 key: (immutable ? `sites/${plan.target}/assets/` : prefix) + key,
                 body: { file, size: stat.size },
-                type: mime.contentType(mime.lookup(key) || "application/octet-stream") || "application/octet-stream",
+                type: mime.contentType(mime.lookup(key) || "application/octet-stream") ||
+                    "application/octet-stream",
             });
         }
     }
@@ -206,6 +208,14 @@ export async function main() {
     const uploads = files
         .filter((file) => !skipped.has(file.key))
         .sort((a, b) => size(b) - size(a));
+    if (plan.production) {
+        await store.put(prefix + INVENTORY_FILE, JSON.stringify({
+            version: 1,
+            assets: files
+                .filter((file) => file.key.startsWith(assetPrefix))
+                .map((file) => file.key),
+        }), "application/json");
+    }
     const bytes = uploads.reduce((total, file) => total + size(file), 0);
     console.log(`Checked assets in ${((Date.now() - checkStarted) / 1000).toFixed(1)}s. Skipping ${skipped.size} unchanged assets.`);
     console.log(`Uploading ${uploads.length} files (${(bytes / 1024 ** 2).toFixed(1)} MiB), concurrency ${concurrency}...`);
@@ -216,6 +226,8 @@ export async function main() {
         uploadSeconds = (Date.now() - uploadStarted) / 1000;
         console.log(`Uploaded ${uploads.length} files in ${uploadSeconds.toFixed(1)}s. Publishing hostnames...`);
         await assertCurrent();
+        if (plan.production)
+            await retainPreviousProduction(s3, bucket, hosts.filter((host) => host !== releaseHost));
     }, {
         concurrency,
         onProgress: (completed, total) => {
@@ -233,6 +245,18 @@ export async function main() {
         await appendFile(env.GITHUB_STEP_SUMMARY, `Website: https://${plan.hostname}\n\nUploaded ${uploads.length} files in ${uploadSeconds.toFixed(1)}s; reused ${skipped.size} unchanged assets. Routing and TLS must already be configured by the setup guide.\n`);
     await comment(false);
     console.log(`Published https://${plan.hostname}`);
+    if (plan.production) {
+        try {
+            const result = await pruneProduction(s3, bucket);
+            console.log(`Retention: deleted ${result.releases} expired releases and ${result.assets} unreferenced assets (7 days).`);
+            if (result.assetsDeferred)
+                console.log("Shared asset cleanup deferred: retained legacy releases have no inventory.");
+        }
+        catch (error) {
+            // Publication succeeded; cleanup failure must not imply otherwise.
+            console.warn(`::warning::Website published, but retention cleanup failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        }
+    }
 }
 if (process.argv[1] === fileURLToPath(import.meta.url))
     main().catch((error) => {

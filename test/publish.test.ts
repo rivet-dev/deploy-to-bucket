@@ -8,6 +8,7 @@ import {
 	PutObjectCommand,
 	ListObjectsV2Command,
 	DeleteObjectsCommand,
+	GetObjectCommand,
 } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -67,6 +68,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 		patchComments = 0;
 	const objects = new Map<string, string>();
 	const uploadedKeys: string[] = [];
+	const modified = new Map<string, Date>();
 	const comments: GitHubComment[] = [];
 	t.mock.method(
 		S3Client.prototype,
@@ -74,7 +76,10 @@ test("bucket-only API contract: publish, comments and cleanup without management
 		async function (
 			this: S3Client,
 			command:
-				PutObjectCommand | ListObjectsV2Command | DeleteObjectsCommand,
+				| PutObjectCommand
+				| ListObjectsV2Command
+				| DeleteObjectsCommand
+				| GetObjectCommand,
 		) {
 			const credentials = await this.config.credentials();
 			assert.equal(credentials.accessKeyId, "synthetic-access-key");
@@ -93,6 +98,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 						body = Buffer.concat(parts).toString();
 					}
 					objects.set(input.Key, body);
+					modified.set(input.Key, new Date());
 					uploadedKeys.push(input.Key);
 					return {};
 				}
@@ -108,10 +114,17 @@ test("bucket-only API contract: publish, comments and cleanup without management
 								return {
 									Key,
 									Size: Buffer.byteLength(body),
+									LastModified: modified.get(Key) ?? new Date(),
 									ETag: `"${createHash("md5").update(body).digest("hex")}"`,
 								};
 							}),
 					};
+				}
+				case command instanceof GetObjectCommand: {
+					const body = objects.get(command.input.Key!);
+					if (body === undefined)
+						throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+					return { Body: { transformToString: async () => body } };
 				}
 				case command instanceof DeleteObjectsCommand:
 					command.input.Delete?.Objects?.forEach((o) => {
@@ -126,13 +139,12 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	);
 	globalThis.fetch = async (input, options = {}) => {
 		const url = new URL(
-				typeof input === "string" || input instanceof URL
-					? input
-					: input.url,
+				typeof input === "string" || input instanceof URL ? input : input.url,
 			),
 			path = url.pathname,
 			method = options.method || "GET";
 		if (url.hostname === "api.github.com") {
+			if (path.endsWith("/commits/main")) return Response.json({ sha: "abc" });
 			if (path.endsWith("/pulls/7")) return Response.json(pr);
 			if (method === "GET" && path.endsWith("/comments"))
 				return Response.json(comments);
@@ -204,4 +216,31 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	assert.equal(patchComments, 3);
 	assert.deepEqual([...objects.keys()], ["sites/production/keep"]);
 	await main();
+	// Production records references for both new and reused shared assets, and
+	// gives the previous release a grace period before switching the hostname.
+	Object.assign(process.env, {
+		GITHUB_EVENT_NAME: "push",
+		GITHUB_REF_NAME: "main",
+		GITHUB_SHA: "abc",
+		GITHUB_RUN_ID: "456",
+		GITHUB_RUN_ATTEMPT: "1",
+		SITE_CONFIG: "",
+	});
+	await writeFile(eventPath, "{}");
+	await main();
+	const inventoryKey = "sites/production/releases/456-1/.deployment.json";
+	assert.deepEqual(JSON.parse(objects.get(inventoryKey)!), {
+		version: 1,
+		assets: ["sites/production/assets/_astro/app.a1.js"],
+	});
+	process.env.GITHUB_RUN_ATTEMPT = "2";
+	await main();
+	assert.ok(objects.has("sites/production/releases/456-1/.retained.json"));
+	assert.ok(objects.has("sites/production/releases/456-1/index.html"));
+	assert.deepEqual(
+		JSON.parse(
+			objects.get("sites/production/releases/456-2/.deployment.json")!,
+		),
+		JSON.parse(objects.get(inventoryKey)!),
+	);
 });
