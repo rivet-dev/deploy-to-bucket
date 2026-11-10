@@ -47,4 +47,6 @@ Verify HTTPS to an arbitrary unused preview hostname returns the Worker's `404` 
 
 Before any production cutover, verify the site's required routing behavior on the test hostname. CI can update files anywhere in its one bucket, including production; use separate buckets and credentials if production and previews need separate trust boundaries.
 
+Uploads default to **32 concurrent requests**. Set `upload-concurrency` (1–128) to tune it for your runner and connection. The action reports file counts, bytes, elapsed upload time, and reused assets. It compares size and checksum to skip unchanged files under `immutablePrefixes` (default `["_astro/"]`); only put content-hashed assets in these prefixes. HTML and other release files are always uploaded before the domain switches. These upload improvements are on `main`; `v0.1.0` keeps the original uploader.
+
 References: [R2 token scopes](https://developers.cloudflare.com/r2/api/tokens/), [Worker routes](https://developers.cloudflare.com/workers/configuration/routing/routes/), [custom domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Universal SSL coverage](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/limitations/).

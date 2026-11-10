@@ -50,21 +50,57 @@ export function deployment(
 	if (remove && production) throw new Error("Refusing to delete production.");
 	return { target, hostname, production, remove, pr: pr?.number };
 }
+export async function forEachConcurrent<T>(
+	items: readonly T[],
+	concurrency: number,
+	run: (item: T) => Promise<void>,
+): Promise<void> {
+	if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 128)
+		throw new Error(
+			"upload-concurrency must be an integer between 1 and 128",
+		);
+	let next = 0,
+		failed = false;
+	let failure: unknown;
+	await Promise.all(
+		Array.from(
+			{ length: Math.min(concurrency, items.length) },
+			async () => {
+				while (!failed && next < items.length) {
+					const item = items[next++];
+					try {
+						await run(item);
+					} catch (error) {
+						if (!failed) failure = error;
+						failed = true;
+					}
+				}
+			},
+		),
+	);
+	if (failed) throw failure;
+}
+
 export async function publish(
 	store: Pick<ObjectStore, "put">,
 	files: UploadFile[],
 	manifest: Manifest,
 	hosts: string[],
 	beforePublish = async () => {},
+	{
+		concurrency = 32,
+		onProgress,
+	}: {
+		concurrency?: number;
+		onProgress?: (completed: number, total: number) => void;
+	} = {},
 ) {
-	// Upload completion is the publication barrier. A failed build/upload never changes a host.
-	for (let start = 0; start < files.length; start += 8) {
-		await Promise.all(
-			files
-				.slice(start, start + 8)
-				.map((file) => store.put(file.key, file.body, file.type)),
-		);
-	}
+	let completed = 0;
+	// Drain in-flight writes on failure before returning; no publication follows.
+	await forEachConcurrent(files, concurrency, async (file) => {
+		await store.put(file.key, file.body, file.type);
+		onProgress?.(++completed, files.length);
+	});
 	await beforePublish();
 	for (const host of hosts)
 		await store.put(

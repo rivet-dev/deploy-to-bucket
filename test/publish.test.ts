@@ -9,6 +9,7 @@ import {
 	ListObjectsV2Command,
 	DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import type { GitHubComment } from "../types.js";
 import { main } from "../deploy.js";
@@ -26,7 +27,8 @@ test("bucket-only API contract: publish, comments and cleanup without management
 		Object.assign(process.env, originalEnv);
 		await rm(dir, { recursive: true });
 	});
-	await mkdir(join(dir, "dist"));
+	await mkdir(join(dir, "dist/_astro"), { recursive: true });
+	await writeFile(join(dir, "dist/_astro/app.a1.js"), "asset");
 	await writeFile(join(dir, "dist/index.html"), "<h1>site</h1>");
 	const pr = {
 		number: 7,
@@ -51,6 +53,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 		SITE_CONFIG: "",
 		SITE_WORKDIR: dir,
 		SITE_DIRECTORY: "dist",
+		SITE_UPLOAD_CONCURRENCY: "4",
 		GITHUB_REPOSITORY: "example/site",
 		GITHUB_EVENT_NAME: "pull_request",
 		GITHUB_EVENT_PATH: eventPath,
@@ -63,6 +66,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	let postComments = 0,
 		patchComments = 0;
 	const objects = new Map<string, string>();
+	const uploadedKeys: string[] = [];
 	const comments: GitHubComment[] = [];
 	t.mock.method(
 		S3Client.prototype,
@@ -89,6 +93,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 						body = Buffer.concat(parts).toString();
 					}
 					objects.set(input.Key, body);
+					uploadedKeys.push(input.Key);
 					return {};
 				}
 				case command instanceof ListObjectsV2Command: {
@@ -97,7 +102,15 @@ test("bucket-only API contract: publish, comments and cleanup without management
 						Contents: [...objects.keys()]
 							.filter((k) => k.startsWith(input.Prefix ?? ""))
 							.slice(0, input.MaxKeys)
-							.map((Key) => ({ Key })),
+							.map((Key) => {
+								const body = objects.get(Key);
+								assert.ok(body !== undefined);
+								return {
+									Key,
+									Size: Buffer.byteLength(body),
+									ETag: `"${createHash("md5").update(body).digest("hex")}"`,
+								};
+							}),
 					};
 				}
 				case command instanceof DeleteObjectsCommand:
@@ -164,6 +177,22 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	await main();
 	assert.equal(patchComments, 1);
 	assert.equal(postComments, 1);
+	const asset = "sites/pr-7/assets/_astro/app.a1.js";
+	assert.equal(
+		uploadedKeys.filter((key) => key === asset).length,
+		1,
+		"second release reuses the verified asset",
+	);
+	assert.ok(objects.has("sites/pr-7/releases/123-2/index.html"));
+	await writeFile(join(dir, "dist/_astro/app.a1.js"), "other");
+	process.env.GITHUB_RUN_ATTEMPT = "3";
+	await main();
+	assert.equal(
+		uploadedKeys.filter((key) => key === asset).length,
+		2,
+		"changed bytes must upload even at the same immutable path",
+	);
+	assert.equal(objects.get(asset), "other");
 	// Cleanup removes all prior release manifests as well as the current pointer.
 	objects.set("hosts/pr-7-r-999-1.preview.gameinc.io.json", "{}");
 	objects.set("sites/production/keep", "keep");
@@ -172,7 +201,7 @@ test("bucket-only API contract: publish, comments and cleanup without management
 	await writeFile(eventPath, JSON.stringify(event));
 	process.env.SITE_CONFIG = "missing-generated-config.json";
 	await main();
-	assert.equal(patchComments, 2);
+	assert.equal(patchComments, 3);
 	assert.deepEqual([...objects.keys()], ["sites/production/keep"]);
 	await main();
 });

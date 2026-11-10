@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { S3Client, PutObjectCommand, ListObjectsV2Command, DeleteObjectsCommand, } from "@aws-sdk/client-s3";
 import mime from "mime-types";
 import { deployment, publish, cleanup } from "./core.js";
+import { listAssets, unchangedAssets } from "./uploads.js";
 const env = process.env;
 function requiredEnv(name) {
     const value = env[name];
@@ -32,6 +33,9 @@ export async function main() {
         throw new Error("bucket must name an existing R2 bucket");
     if (!env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY)
         throw new Error("Bucket-scoped R2 access-key-id and secret-access-key are required; follow SETUP.md");
+    const concurrency = Number(env.SITE_UPLOAD_CONCURRENCY || "32");
+    if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 128)
+        throw new Error("upload-concurrency must be an integer between 1 and 128");
     const event = JSON.parse(await readFile(requiredEnv("GITHUB_EVENT_PATH"), "utf8"));
     const plan = deployment(event, env, domain, env.SITE_MAIN || "main", previewDomain);
     async function assertCurrent() {
@@ -106,10 +110,13 @@ export async function main() {
             secretAccessKey: env.R2_SECRET_ACCESS_KEY,
         },
         maxAttempts: 5,
+        requestHandler: {
+            httpsAgent: { keepAlive: true, maxSockets: concurrency },
+        },
     });
     const store = {
         put: async (key, body, type) => {
-            // Open streams here, so only the current bounded upload batch holds descriptors.
+            // Open streams lazily: only active uploads hold file descriptors.
             const data = typeof body === "object" ? createReadStream(body.file) : body;
             await s3.send(new PutObjectCommand({
                 Bucket: bucket,
@@ -200,12 +207,41 @@ export async function main() {
     await walk(output);
     if (!files.some((f) => f.key === prefix + "index.html"))
         throw new Error("Build output must contain index.html");
-    await publish(store, files, { target: plan.target, prefix, preview: !plan.production, config }, hosts.filter((h) => h !== releaseHost), assertCurrent);
+    console.log(`Found ${files.length} files. Checking existing immutable assets...`);
+    const checkStarted = Date.now();
+    const assetPrefix = `sites/${plan.target}/assets/`;
+    const skipped = await unchangedAssets(files, assetPrefix, listAssets(s3, bucket, assetPrefix));
+    const size = (file) => typeof file.body === "string"
+        ? Buffer.byteLength(file.body)
+        : file.body.size;
+    const uploads = files
+        .filter((file) => !skipped.has(file.key))
+        .sort((a, b) => size(b) - size(a));
+    const bytes = uploads.reduce((total, file) => total + size(file), 0);
+    console.log(`Checked assets in ${((Date.now() - checkStarted) / 1000).toFixed(1)}s. Skipping ${skipped.size} unchanged assets.`);
+    console.log(`Uploading ${uploads.length} files (${(bytes / 1024 ** 2).toFixed(1)} MiB), concurrency ${concurrency}...`);
+    const uploadStarted = Date.now();
+    let lastProgress = uploadStarted;
+    let uploadSeconds = 0;
+    await publish(store, uploads, { target: plan.target, prefix, preview: !plan.production, config }, hosts.filter((h) => h !== releaseHost), async () => {
+        uploadSeconds = (Date.now() - uploadStarted) / 1000;
+        console.log(`Uploaded ${uploads.length} files in ${uploadSeconds.toFixed(1)}s. Publishing hostnames...`);
+        await assertCurrent();
+    }, {
+        concurrency,
+        onProgress: (completed, total) => {
+            const now = Date.now();
+            if (now - lastProgress >= 10000) {
+                console.log(`Uploaded ${completed}/${total} files (${((now - uploadStarted) / 1000).toFixed(0)}s elapsed)`);
+                lastProgress = now;
+            }
+        },
+    });
     // Immutable release URLs are always excluded from search indexes.
     await store.put(`hosts/${releaseHost}.json`, JSON.stringify({ target: plan.target, prefix, preview: true, config }), "application/json");
     await appendFile(requiredEnv("GITHUB_OUTPUT"), `url=https://${plan.hostname}\nrelease-url=https://${releaseHost}\n`);
     if (env.GITHUB_STEP_SUMMARY)
-        await appendFile(env.GITHUB_STEP_SUMMARY, `Website: https://${plan.hostname}\n\nUploaded ${files.length} files. Routing and TLS must already be configured by the setup guide.\n`);
+        await appendFile(env.GITHUB_STEP_SUMMARY, `Website: https://${plan.hostname}\n\nUploaded ${uploads.length} files in ${uploadSeconds.toFixed(1)}s; reused ${skipped.size} unchanged assets. Routing and TLS must already be configured by the setup guide.\n`);
     await comment(false);
     console.log(`Published https://${plan.hostname}`);
 }
