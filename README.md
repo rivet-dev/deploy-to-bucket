@@ -15,15 +15,16 @@ A GitHub Action that publishes static websites to your own Cloudflare R2 bucket 
 Follow the quickstart in this README:
 https://github.com/rivet-dev/deploy-to-bucket/blob/main/README.md
 
-If you have browser or computer-use access, use it to create the Cloudflare
-API token. Otherwise, ask me to provide the token.
+Use browser or computer-use access to complete the one-time setup guide,
+including the bucket, Worker, wildcard routing, TLS, and bucket-scoped CI
+credentials. Otherwise, ask me for the credentials or access you need.
 ```
 
 ## Quickstart
 
-1. Enable R2 in the Cloudflare account hosting your domain's DNS zone.
-2. Open [User API Tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token → Custom token**. Grant **Account: Workers Scripts Edit, Workers R2 Storage Edit** and **Zone: Zone Read, DNS Edit, Workers Routes Edit**. Scope to your account and DNS zone; save the user token as the GitHub Actions secret `CLOUDFLARE_API_TOKEN`.
-3. Add the two workflows below. Choose your hostname and adjust the build command and output directory. For an immutable action version, replace `@v1` with a release commit SHA.
+1. Have your agent complete the [one-time setup guide](SETUP.md). It provisions hosting and creates R2 Object Read & Write credentials scoped to one bucket. CI gets no Cloudflare management permissions.
+2. Save the two secrets and four repository variables listed in the setup guide.
+3. Add the workflows below and adjust your build command and output directory. Use `@v2`, or pin a release commit SHA.
 
 **`.github/workflows/website.yml`**
 
@@ -53,10 +54,14 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
-      - uses: rivet-dev/deploy-to-bucket@v1
+      - uses: rivet-dev/deploy-to-bucket@v2
         with:
-          cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          domain: website.gameinc.io
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          account-id: ${{ vars.R2_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          domain: ${{ vars.WEBSITE_DOMAIN }}
+          preview-domain: ${{ vars.WEBSITE_PREVIEW_DOMAIN }}
           directory: dist
 ```
 
@@ -81,14 +86,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: rivet-dev/deploy-to-bucket@v1
+      - uses: rivet-dev/deploy-to-bucket@v2
         with:
-          cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          domain: website.gameinc.io
+          access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          account-id: ${{ vars.R2_ACCOUNT_ID }}
+          bucket: ${{ vars.R2_BUCKET }}
+          domain: ${{ vars.WEBSITE_DOMAIN }}
+          preview-domain: ${{ vars.WEBSITE_PREVIEW_DOMAIN }}
 ```
 
 Keep the same concurrency group and hostname in both workflows. Cleanup runs without a checkout or build.
 
-`main` publishes to your domain; PRs get preview URLs and a comment. Closing a PR deletes its assets and hostnames. The action creates the Worker, bucket, DNS, and TLS; use an unused hostname, since it refuses to overwrite existing DNS.
+`main` publishes to your domain; PRs get preview URLs and a comment. Closing a PR deletes its files and release pointers, so its URLs return 404. The action only changes objects in the preconfigured bucket; hosting infrastructure stays in place.
 
 For `rivet-dev/website`, use the [pnpm deployment](examples/website.yml) and [cleanup](examples/website-cleanup.yml) workflows, and copy the [routing adapter](examples/website-config.mjs) to `scripts/website-config.mjs` to preserve redirects and headers. Build in CI, then pass `config: website-routing.json` to the action. Keep Railway serving production until the test hostname is verified; the MCP backend must remain running.

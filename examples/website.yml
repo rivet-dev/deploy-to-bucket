@@ -41,9 +41,13 @@ jobs:
                   PUBLIC_TYPESENSE_SEARCH_API_KEY: ${{ vars.PUBLIC_TYPESENSE_SEARCH_API_KEY }}
                   PUBLIC_TYPESENSE_COLLECTION_NAME: ${{ vars.PUBLIC_TYPESENSE_COLLECTION_NAME }}
             - name: Publish website
-              uses: rivet-dev/deploy-to-bucket@v1
+              uses: rivet-dev/deploy-to-bucket@v2
               with:
-                  cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  domain: website.gameinc.io
+                  access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+                  secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+                  account-id: ${{ vars.R2_ACCOUNT_ID }}
+                  bucket: ${{ vars.R2_BUCKET }}
+                  domain: ${{ vars.WEBSITE_DOMAIN }}
+                  preview-domain: ${{ vars.WEBSITE_PREVIEW_DOMAIN }}
                   config: website-routing.json
                   directory: dist

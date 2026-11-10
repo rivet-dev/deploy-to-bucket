@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { S3Client } from "@aws-sdk/client-s3";
 import { main } from "../deploy.mjs";
 
-test("API contract: bootstrap, upload, repeat deployment, comments and close cleanup", async (t) => {
+test("bucket-only API contract: publish, comments and cleanup without management access", async (t) => {
 	const dir = await mkdtemp(join(tmpdir(), "r2-action-test-"));
 	const originalEnv = { ...process.env },
 		originalFetch = globalThis.fetch,
@@ -34,7 +34,11 @@ test("API contract: bootstrap, upload, repeat deployment, comments and close cle
 	const eventPath = join(dir, "event.json");
 	await writeFile(eventPath, JSON.stringify(event));
 	Object.assign(process.env, {
-		CF_TOKEN: "synthetic-token",
+		R2_ACCOUNT_ID: "a".repeat(32),
+		R2_BUCKET: "example-site",
+		R2_ACCESS_KEY_ID: "synthetic-access-key",
+		R2_SECRET_ACCESS_KEY: "synthetic-secret-key",
+		SITE_PREVIEW_DOMAIN: "preview.gameinc.io",
 		SITE_DOMAIN: "site.gameinc.io",
 		SITE_MAIN: "main",
 		SITE_CONFIG: "",
@@ -49,15 +53,16 @@ test("API contract: bootstrap, upload, repeat deployment, comments and close cle
 		GITHUB_STEP_SUMMARY: join(dir, "summary"),
 		GH_TOKEN: "synthetic-gh-token",
 	});
-	let bucket = false,
-		uploads = 0,
-		postComments = 0,
+	let postComments = 0,
 		patchComments = 0;
 	const objects = new Map(),
-		domains = [],
 		comments = [];
 	S3Client.prototype.send = async function (command) {
+		const credentials = await this.config.credentials();
+		assert.equal(credentials.accessKeyId, "synthetic-access-key");
+		assert.equal(credentials.secretAccessKey, "synthetic-secret-key");
 		const input = command.input;
+		assert.equal(input.Bucket, "example-site");
 		switch (command.constructor.name) {
 			case "PutObjectCommand": {
 				let body = input.Body;
@@ -83,7 +88,6 @@ test("API contract: bootstrap, upload, repeat deployment, comments and close cle
 				throw Error(command.constructor.name);
 		}
 	};
-	const ok = (result) => Response.json({ success: true, result });
 	globalThis.fetch = async (input, options = {}) => {
 		const url = new URL(input),
 			path = url.pathname,
@@ -107,78 +111,39 @@ test("API contract: bootstrap, upload, repeat deployment, comments and close cle
 				return Response.json({});
 			}
 		}
-		if (path === "/client/v4/zones")
-			return ok(
-				url.searchParams.get("name") === "gameinc.io"
-					? [
-							{
-								id: "zone",
-								name: "gameinc.io",
-								account: { id: "account" },
-							},
-						]
-					: [],
-			);
-		if (path.endsWith("/dns_records")) return ok([]);
-		if (path.endsWith("/user/tokens/verify"))
-			return ok({ id: "token-id", status: "active" });
-		if (path.endsWith("/r2/buckets") && method === "POST") {
-			bucket = true;
-			return ok({});
-		}
-		if (path.includes("/r2/buckets/"))
-			return bucket
-				? ok({})
-				: Response.json({ success: false }, { status: 404 });
-		if (path.endsWith("/workers/domains")) {
-			if (method === "GET") return ok(domains);
-			const data = JSON.parse(options.body);
-			assert.equal(data.zone_id, "zone");
-			domains.push({ ...data, id: String(domains.length + 1) });
-			return ok({});
-		}
-		if (path.includes("/workers/domains/") && method === "DELETE") {
-			domains.splice(
-				domains.findIndex((d) => path.endsWith("/" + d.id)),
-				1,
-			);
-			return ok({});
-		}
-		if (path.includes("/workers/scripts/") && method === "PUT") {
-			const metadata = JSON.parse(
-				await options.body.get("metadata").text(),
-			);
-			assert.equal(metadata.bindings[0].type, "r2_bucket");
-			assert.equal(metadata.main_module, "worker.mjs");
-			uploads++;
-			return ok({});
-		}
 		throw Error(`Unexpected API call: ${method} ${url}`);
 	};
+	const savedKey = process.env.R2_SECRET_ACCESS_KEY;
+	delete process.env.R2_SECRET_ACCESS_KEY;
+	await assert.rejects(main(), /Bucket-scoped/);
+	process.env.R2_SECRET_ACCESS_KEY = savedKey;
+	const objectOnlySend = S3Client.prototype.send;
+	S3Client.prototype.send = async () => {
+		throw new Error("NoSuchBucket: configured bucket does not exist");
+	};
+	await assert.rejects(main(), /NoSuchBucket/);
+	assert.equal(objects.size, 0);
+	assert.equal(postComments, 0);
+	S3Client.prototype.send = objectOnlySend;
 	await main();
-	assert.equal(domains.length, 2);
 	assert.equal(postComments, 1);
-	assert.equal(uploads, 1);
 	assert.match(
-		objects.get("hosts/pr-7--site.gameinc.io.json"),
+		objects.get("hosts/pr-7.preview.gameinc.io.json"),
 		/releases\/123-1/,
 	);
 	process.env.GITHUB_RUN_ATTEMPT = "2";
 	await main();
-	assert.equal(domains.length, 3);
 	assert.equal(patchComments, 1);
 	assert.equal(postComments, 1);
-	// A failed domain attachment can leave a manifest: cleanup must remove it too.
-	objects.set("hosts/pr-7-r-999-1--site.gameinc.io.json", "{}");
+	// Cleanup removes all prior release manifests as well as the current pointer.
+	objects.set("hosts/pr-7-r-999-1.preview.gameinc.io.json", "{}");
 	objects.set("sites/production/keep", "keep");
 	pr.state = "closed";
 	event.action = "closed";
 	await writeFile(eventPath, JSON.stringify(event));
 	process.env.SITE_CONFIG = "missing-generated-config.json";
 	await main();
-	assert.equal(domains.length, 0);
 	assert.equal(patchComments, 2);
 	assert.deepEqual([...objects.keys()], ["sites/production/keep"]);
 	await main();
-	assert.equal(domains.length, 0);
 });

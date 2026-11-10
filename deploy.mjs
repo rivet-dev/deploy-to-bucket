@@ -9,64 +9,45 @@ import {
 	DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import mime from "mime-types";
-import { hash, deployment, publish, cleanup } from "./core.mjs";
+import { deployment, publish, cleanup } from "./core.mjs";
 
 const env = process.env;
-async function cf(path, method = "GET", body, absent = false) {
-	for (let attempt = 0; attempt < 6; attempt++) {
-		const response = await fetch(
-			`https://api.cloudflare.com/client/v4${path}`,
-			{
-				method,
-				headers: {
-					Authorization: `Bearer ${env.CF_TOKEN}`,
-					...(body && !(body instanceof FormData)
-						? { "Content-Type": "application/json" }
-						: {}),
-				},
-				body:
-					body instanceof FormData
-						? body
-						: body
-							? JSON.stringify(body)
-							: undefined,
-				signal: AbortSignal.timeout(60000),
-			},
-		);
-		if (
-			(response.status === 429 || response.status >= 500) &&
-			attempt < 5
-		) {
-			await new Promise((r) =>
-				setTimeout(r, Math.min(30000, 1000 * 2 ** attempt)),
-			);
-			continue;
-		}
-		if (absent && response.status === 404) return null;
-		const data = await response.json();
-		if (!response.ok || !data.success)
-			throw new Error(
-				`Cloudflare ${method} ${path}: ${response.status} ${JSON.stringify(data.errors)}`,
-			);
-		return data.result;
-	}
-}
-async function allDomains(account) {
-	const result = [];
-	for (let page = 1; ; page++) {
-		const batch = await cf(
-			`/accounts/${account}/workers/domains?per_page=100&page=${page}`,
-		);
-		result.push(...batch);
-		if (batch.length < 100) return result;
-	}
-}
 export async function main() {
-	const domain = env.SITE_DOMAIN.toLowerCase();
-	if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(domain))
-		throw new Error("domain must be a hostname, without scheme or path");
+	const hostname = (value) => {
+		if (
+			!value ||
+			!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(value) ||
+			value.length > 253 ||
+			value.split(".").some((label) => label.length > 63)
+		)
+			throw new Error(
+				"domain and preview-domain must be valid hostnames without a scheme or path",
+			);
+		return value;
+	};
+	const domain = hostname(env.SITE_DOMAIN?.toLowerCase());
+	const previewDomain = hostname(env.SITE_PREVIEW_DOMAIN?.toLowerCase());
+	if (domain === previewDomain || domain.endsWith(`.${previewDomain}`))
+		throw new Error(
+			"Use a dedicated preview-domain outside the production hostname namespace",
+		);
+	if (!/^[a-f0-9]{32}$/.test(env.R2_ACCOUNT_ID ?? ""))
+		throw new Error("account-id must be a Cloudflare account ID");
+	const bucket = env.R2_BUCKET;
+	if (!bucket || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket))
+		throw new Error("bucket must name an existing R2 bucket");
+	if (!env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY)
+		throw new Error(
+			"Bucket-scoped R2 access-key-id and secret-access-key are required; follow SETUP.md",
+		);
 	const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, "utf8"));
-	const plan = deployment(event, env, domain, env.SITE_MAIN || "main");
+	const plan = deployment(
+		event,
+		env,
+		domain,
+		env.SITE_MAIN || "main",
+		previewDomain,
+	);
 	async function assertCurrent() {
 		if (!env.GH_TOKEN)
 			throw new Error("github-token is required for stale-run checks");
@@ -135,58 +116,24 @@ export async function main() {
 	const release = `${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`;
 	if (!/^\d+-\d+$/.test(release))
 		throw new Error("Missing GitHub run identity");
-	const releaseHost = `${plan.target}-r-${release}--${domain}`;
-	if (releaseHost.split(".").some((label) => label.length > 63))
+	const releaseHost = `${plan.target}-r-${release}.${previewDomain}`;
+	if (
+		releaseHost.length > 253 ||
+		releaseHost.split(".").some((label) => label.length > 63)
+	)
 		throw new Error("Release hostname is too long; use a shorter domain.");
 	const hosts = [
 		plan.hostname,
 		releaseHost,
 		...(config.aliases ?? []),
 		...(config.proxies ?? []).map((p) => p.host),
-	];
-	let zone;
-	const labels = domain.split(".");
-	for (let i = 0; i < labels.length - 1; i++) {
-		const zones = await cf(
-			`/zones?name=${labels.slice(i).join(".")}&status=active`,
-		);
-		if (zones.length === 1) {
-			zone = zones[0];
-			break;
-		}
-	}
-	if (!zone) throw new Error("No active Cloudflare zone found for domain");
-	if (hosts.some((h) => h !== zone.name && !h.endsWith(`.${zone.name}`)))
-		throw new Error(
-			"All hostnames must belong to the production Cloudflare zone",
-		);
-	const account = zone.account.id;
-	const resource = `website-${hash(`${env.GITHUB_REPOSITORY}:${domain}`).slice(0, 20)}`;
-	const bucketPath = `/accounts/${account}/r2/buckets/${resource}`;
-	const bucket = await cf(bucketPath, "GET", undefined, true);
-	if (!bucket && plan.remove) {
-		console.log("Bucket already absent; nothing to clean up.");
-		return;
-	}
-	if (!bucket) {
-		try {
-			await cf(`/accounts/${account}/r2/buckets`, "POST", {
-				name: resource,
-			});
-		} catch (error) {
-			if (!(await cf(bucketPath, "GET", undefined, true))) throw error;
-		}
-	}
-	// Cloudflare documents S3 credentials as token ID + SHA-256(token value).
-	const token = await cf("/user/tokens/verify");
-	if (token.status !== "active")
-		throw new Error("Cloudflare token is not active");
+	].map(hostname);
 	const s3 = new S3Client({
 		region: "auto",
-		endpoint: `https://${account}.r2.cloudflarestorage.com`,
+		endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
 		credentials: {
-			accessKeyId: token.id,
-			secretAccessKey: hash(env.CF_TOKEN),
+			accessKeyId: env.R2_ACCESS_KEY_ID,
+			secretAccessKey: env.R2_SECRET_ACCESS_KEY,
 		},
 		maxAttempts: 5,
 	});
@@ -199,7 +146,7 @@ export async function main() {
 					: body;
 			await s3.send(
 				new PutObjectCommand({
-					Bucket: resource,
+					Bucket: bucket,
 					Key: key,
 					Body: data,
 					ContentLength: body?.size,
@@ -211,7 +158,7 @@ export async function main() {
 			(
 				await s3.send(
 					new ListObjectsV2Command({
-						Bucket: resource,
+						Bucket: bucket,
 						Prefix: prefix,
 						MaxKeys: 1000,
 					}),
@@ -220,7 +167,7 @@ export async function main() {
 		delete: async (keys) => {
 			const result = await s3.send(
 				new DeleteObjectsCommand({
-					Bucket: resource,
+					Bucket: bucket,
 					Delete: { Objects: keys.map((Key) => ({ Key })) },
 				}),
 			);
@@ -230,7 +177,6 @@ export async function main() {
 				);
 		},
 	};
-	const domains = await allDomains(account);
 	const comment = async (removed) => {
 		if (!plan.pr || !env.GH_TOKEN) return;
 		const base = `${env.GITHUB_API_URL || "https://api.github.com"}/repos/${env.GITHUB_REPOSITORY}`;
@@ -251,7 +197,7 @@ export async function main() {
 				);
 			return res.json();
 		}
-		const marker = `<!-- r2-website:${resource} -->`;
+		const marker = `<!-- deploy-to-bucket:${bucket}:${domain} -->`;
 		let existing;
 		for (let page = 1; ; page++) {
 			const batch = await gh(
@@ -272,68 +218,10 @@ export async function main() {
 		);
 	};
 	if (plan.remove) {
-		const owned = domains.filter(
-			(d) =>
-				d.service === resource &&
-				(d.hostname === plan.hostname ||
-					(d.hostname.startsWith(`${plan.target}-r-`) &&
-						d.hostname.endsWith(`--${domain}`))),
-		);
-		await cleanup(store, plan.target, [
-			...new Set([plan.hostname, ...owned.map((d) => d.hostname)]),
-		]);
-		for (const item of owned)
-			await cf(
-				`/accounts/${account}/workers/domains/${item.id}`,
-				"DELETE",
-			);
+		await cleanup(store, plan.target, [plan.hostname]);
 		await comment(true);
 		return;
 	}
-	// Check ownership before uploading or attaching anything. Never take over existing DNS.
-	for (const hostname of hosts) {
-		const existing = domains.find((d) => d.hostname === hostname);
-		if (existing && existing.service !== resource)
-			throw new Error(`Hostname ${hostname} belongs to another Worker`);
-		if (!existing) {
-			const records = await cf(
-				`/zones/${zone.id}/dns_records?name=${hostname}`,
-			);
-			if (records.length)
-				throw new Error(
-					`Hostname ${hostname} already has DNS records. Review the DNS cutover before retrying.`,
-				);
-		}
-	}
-	const form = new FormData();
-	form.set(
-		"metadata",
-		new Blob(
-			[
-				JSON.stringify({
-					main_module: "worker.mjs",
-					compatibility_date: "2026-11-09",
-					bindings: [
-						{
-							type: "r2_bucket",
-							name: "BUCKET",
-							bucket_name: resource,
-						},
-					],
-					observability: { enabled: true },
-				}),
-			],
-			{ type: "application/json" },
-		),
-	);
-	form.set(
-		"worker.mjs",
-		new Blob([await readFile(new URL("./worker.mjs", import.meta.url))], {
-			type: "application/javascript+module",
-		}),
-		"worker.mjs",
-	);
-	await cf(`/accounts/${account}/workers/scripts/${resource}`, "PUT", form);
 	const output = resolve(workdir, env.SITE_DIRECTORY || "dist");
 	const prefix = `sites/${plan.target}/releases/${release}/`;
 	const files = [];
@@ -383,14 +271,6 @@ export async function main() {
 		JSON.stringify({ target: plan.target, prefix, preview: true, config }),
 		"application/json",
 	);
-	for (const hostname of hosts)
-		if (!domains.some((d) => d.hostname === hostname))
-			await cf(`/accounts/${account}/workers/domains`, "PUT", {
-				hostname,
-				service: resource,
-				environment: "production",
-				zone_id: zone.id,
-			});
 	await appendFile(
 		env.GITHUB_OUTPUT,
 		`url=https://${plan.hostname}\nrelease-url=https://${releaseHost}\n`,
@@ -398,7 +278,7 @@ export async function main() {
 	if (env.GITHUB_STEP_SUMMARY)
 		await appendFile(
 			env.GITHUB_STEP_SUMMARY,
-			`Website: https://${plan.hostname}\n\nUploaded ${files.length} files. First-time TLS provisioning may take several minutes.\n`,
+			`Website: https://${plan.hostname}\n\nUploaded ${files.length} files. Routing and TLS must already be configured by the setup guide.\n`,
 		);
 	await comment(false);
 	console.log(`Published https://${plan.hostname}`);

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 export const hash = (value) => createHash("sha256").update(value).digest("hex");
-export function deployment(event, env, domain, main) {
+export function deployment(event, env, domain, main, previewDomain) {
 	const pr = event.pull_request;
 	if (pr && pr.head.repo.full_name !== env.GITHUB_REPOSITORY)
 		throw new Error(
@@ -23,8 +23,11 @@ export function deployment(event, env, domain, main) {
 		: pr
 			? `pr-${pr.number}`
 			: `branch-${hash(branch).slice(0, 16)}`;
-	const hostname = production ? domain : `${target}--${domain}`;
-	if (hostname.split(".").some((label) => label.length > 63))
+	const hostname = production ? domain : `${target}.${previewDomain}`;
+	if (
+		hostname.length > 253 ||
+		hostname.split(".").some((label) => label.length > 63)
+	)
 		throw new Error(
 			"Hostname label is too long. Use a shorter production domain.",
 		);

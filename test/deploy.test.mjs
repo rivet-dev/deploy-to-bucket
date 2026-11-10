@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deployment, publish, cleanup } from "../core.mjs";
+import { deployment as planDeployment, publish, cleanup } from "../core.mjs";
+const deployment = (event, env, domain, main) =>
+	planDeployment(event, env, domain, main, "preview.gameinc.io");
 const env = {
 	GITHUB_REPOSITORY: "example/site",
 	GITHUB_REF_NAME: "main",
@@ -22,7 +24,7 @@ test("production, PR and collision-safe branch hosts; destructive and fork guard
 			"site.gameinc.io",
 			"main",
 		).hostname,
-		"pr-42--site.gameinc.io",
+		"pr-42.preview.gameinc.io",
 	);
 	assert.throws(() =>
 		deployment(
@@ -87,7 +89,7 @@ test("failed upload and stale runs never publish; manifest is last", async () =>
 });
 test("cleanup removes every batch and only the selected PR; retry is harmless", async () => {
 	const keys = new Set([
-		"hosts/pr-4--site.gameinc.io.json",
+		"hosts/pr-4.preview.gameinc.io.json",
 		"sites/pr-40/x",
 		"sites/production/x",
 		...Array.from({ length: 1201 }, (_, i) => `sites/pr-4/${i}`),
@@ -97,8 +99,8 @@ test("cleanup removes every batch and only the selected PR; retry is harmless", 
 			[...keys].filter((k) => k.startsWith(prefix)).slice(0, 1000),
 		delete: async (batch) => batch.forEach((k) => keys.delete(k)),
 	};
-	await cleanup(store, "pr-4", ["pr-4--site.gameinc.io"]);
-	await cleanup(store, "pr-4", ["pr-4--site.gameinc.io"]);
+	await cleanup(store, "pr-4", ["pr-4.preview.gameinc.io"]);
+	await cleanup(store, "pr-4", ["pr-4.preview.gameinc.io"]);
 	assert.deepEqual([...keys], ["sites/pr-40/x", "sites/production/x"]);
 	await assert.rejects(cleanup(store, "production", []));
 });

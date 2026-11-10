@@ -1,11 +1,23 @@
 name: Deploy to Bucket
 description: Publish a built static website with production and PR hostnames
 inputs:
-    cloudflare-token:
-        description: Cloudflare user API token (Workers Scripts Edit, R2 Storage Edit, Zone Read, DNS Edit, Workers Routes Edit)
+    account-id:
+        description: Cloudflare account containing the existing bucket
+        required: true
+    bucket:
+        description: Existing R2 bucket dedicated to this website
+        required: true
+    access-key-id:
+        description: R2 Object Read & Write access key scoped to this bucket
+        required: true
+    secret-access-key:
+        description: Secret key paired with the bucket-scoped access key
+        required: true
+    preview-domain:
+        description: Preview suffix with wildcard DNS, Worker routing, and TLS already configured
         required: true
     domain:
-        description: Production hostname in an existing Cloudflare zone
+        description: Production hostname already routed to the Worker
         required: true
     directory:
         description: Build output directory relative to working-directory
@@ -45,7 +57,11 @@ runs:
           id: deploy
           shell: bash
           env:
-              CF_TOKEN: ${{ inputs.cloudflare-token }}
+              R2_ACCOUNT_ID: ${{ inputs.account-id }}
+              R2_BUCKET: ${{ inputs.bucket }}
+              R2_ACCESS_KEY_ID: ${{ inputs.access-key-id }}
+              R2_SECRET_ACCESS_KEY: ${{ inputs.secret-access-key }}
+              SITE_PREVIEW_DOMAIN: ${{ inputs.preview-domain }}
               SITE_DOMAIN: ${{ inputs.domain }}
               SITE_DIRECTORY: ${{ inputs.directory }}
               SITE_WORKDIR: ${{ inputs.working-directory }}
