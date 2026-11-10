@@ -10,7 +10,6 @@ import {
 } from "@aws-sdk/client-s3";
 import mime from "mime-types";
 import { deployment, publish, cleanup } from "./core.js";
-import { Domains, waitForHttps } from "./domains.js";
 
 import type {
 	GitHubEvent,
@@ -107,19 +106,6 @@ export async function main() {
 			);
 	}
 	await assertCurrent();
-	const domains = new Domains({
-		accountId: requiredEnv("R2_ACCOUNT_ID"),
-		zoneId: requiredEnv("CF_ZONE_ID"),
-		worker: requiredEnv("CF_WORKER"),
-		token: requiredEnv("CF_API_TOKEN"),
-	});
-	const hostnameTimeout = Number(env.SITE_HOSTNAME_TIMEOUT || "600");
-	if (
-		!Number.isFinite(hostnameTimeout) ||
-		hostnameTimeout < 1 ||
-		hostnameTimeout > 3600
-	)
-		throw new Error("hostname-timeout must be between 1 and 3600 seconds");
 	const workdir = resolve(env.SITE_WORKDIR || ".");
 	const config: RoutingConfig =
 		env.SITE_CONFIG && !plan.remove
@@ -245,7 +231,7 @@ export async function main() {
 			);
 			if (existing || batch.length < 100) break;
 		}
-		const body = `${marker}\n${removed ? "Preview removed; R2 assets deleted and custom hostnames detached." : `Website preview: https://${plan.hostname}\n\nRelease: https://${releaseHost}\n\nCommit: ${event.pull_request?.head.sha}`}`;
+		const body = `${marker}\n${removed ? "Preview removed; R2 assets deleted." : `Website preview: https://${plan.hostname}\n\nRelease: https://${releaseHost}\n\nCommit: ${event.pull_request?.head.sha}`}`;
 		await gh(
 			existing
 				? `/issues/comments/${existing.id}`
@@ -256,7 +242,6 @@ export async function main() {
 	};
 	if (plan.remove) {
 		await cleanup(store, plan.target, [plan.hostname]);
-		await domains.cleanup(plan.target, previewDomain);
 		await comment(true);
 		return;
 	}
@@ -302,13 +287,7 @@ export async function main() {
 		files,
 		{ target: plan.target, prefix, preview: !plan.production, config },
 		hosts.filter((h) => h !== releaseHost),
-		async () => {
-			await assertCurrent();
-			await domains.ensure(hosts);
-			console.log("Waiting for hostname DNS and HTTPS readiness...");
-			await waitForHttps(hosts, hostnameTimeout * 1000);
-			await assertCurrent();
-		},
+		assertCurrent,
 	);
 	// Immutable release URLs are always excluded from search indexes.
 	await store.put(
@@ -323,7 +302,7 @@ export async function main() {
 	if (env.GITHUB_STEP_SUMMARY)
 		await appendFile(
 			env.GITHUB_STEP_SUMMARY,
-			`Website: https://${plan.hostname}\n\nUploaded ${files.length} files. Exact Worker custom domains provision DNS and TLS automatically.\n`,
+			`Website: https://${plan.hostname}\n\nUploaded ${files.length} files. Routing and TLS must already be configured by the setup guide.\n`,
 		);
 	await comment(false);
 	console.log(`Published https://${plan.hostname}`);

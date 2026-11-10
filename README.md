@@ -16,15 +16,17 @@ Follow the quickstart in this README:
 https://github.com/rivet-dev/deploy-to-bucket/blob/main/README.md
 
 Use browser or computer-use access to complete the one-time setup guide,
-including the bucket, Worker, and CI credentials for uploads and automatic
-hostname creation. Otherwise, ask me for the credentials or access you need.
+including the bucket, Worker, wildcard routing, TLS, and bucket-scoped CI
+credentials. Otherwise, ask me for the credentials or access you need.
 ```
 
 ## Quickstart
 
-1. Have your agent complete the [one-time setup guide](SETUP.md). It creates the bucket and Worker, bucket-scoped R2 credentials, and a Cloudflare token for hostname creation.
-2. Save the three secrets and six repository variables listed in the setup guide.
-3. Add the workflows below and adjust your build command and output directory. Use `@main` for on-demand hostnames, or pin a tested commit SHA. `v0.1.0` still uses the old wildcard setup.
+1. Have your agent complete the [one-time setup guide](SETUP.md). It provisions hosting and creates R2 Object Read & Write credentials scoped to one bucket. CI gets no Cloudflare management permissions.
+2. Save the two secrets and four repository variables listed in the setup guide.
+3. Add the workflows below and adjust your build command and output directory. Use `@v0.1.0`, or pin a release commit SHA.
+
+**Preview HTTPS:** Universal SSL covers first-level previews such as `pr-42.gameinc.io`. Nested previews such as `pr-42.preview.gameinc.io` need Advanced Certificate Manager (ACM), or another certificate covering `*.preview.gameinc.io`. The DNS wildcard alone does not provide certificate coverage.
 
 **`.github/workflows/website.yml`**
 
@@ -54,11 +56,8 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
-      - uses: rivet-dev/deploy-to-bucket@main
+      - uses: rivet-dev/deploy-to-bucket@v0.1.0
         with:
-          cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          zone-id: ${{ vars.CLOUDFLARE_ZONE_ID }}
-          worker: ${{ vars.WEBSITE_WORKER }}
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           account-id: ${{ vars.R2_ACCOUNT_ID }}
@@ -89,11 +88,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: rivet-dev/deploy-to-bucket@main
+      - uses: rivet-dev/deploy-to-bucket@v0.1.0
         with:
-          cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          zone-id: ${{ vars.CLOUDFLARE_ZONE_ID }}
-          worker: ${{ vars.WEBSITE_WORKER }}
           access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           account-id: ${{ vars.R2_ACCOUNT_ID }}
@@ -104,6 +100,6 @@ jobs:
 
 Keep the same concurrency group and hostname in both workflows. Cleanup runs without a checkout or build.
 
-`main` publishes to your domain; PRs get preview URLs and a comment. The action creates each exact hostname with automatic DNS and HTTPS—no wildcard or ACM subscription. Closing a PR deletes its files and hostname bindings. The Worker and bucket stay in place. See the setup guide for token permissions, certificate timing, and hostname limits.
+`main` publishes to your domain; PRs get preview URLs and a comment. Closing a PR deletes its files and release pointers, so its URLs return 404. The action only changes objects in the preconfigured bucket; hosting infrastructure stays in place.
 
 For `rivet-dev/website`, use the [pnpm deployment](examples/website.yml) and [cleanup](examples/website-cleanup.yml) workflows, and copy the [routing adapter](examples/website-config.ts) to `scripts/website-config.ts` to preserve redirects and headers. Build in CI, then pass `config: website-routing.json` to the action. Keep Railway serving production until the test hostname is verified; the MCP backend must remain running.

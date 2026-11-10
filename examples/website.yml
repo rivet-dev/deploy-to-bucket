@@ -41,11 +41,8 @@ jobs:
                   PUBLIC_TYPESENSE_SEARCH_API_KEY: ${{ vars.PUBLIC_TYPESENSE_SEARCH_API_KEY }}
                   PUBLIC_TYPESENSE_COLLECTION_NAME: ${{ vars.PUBLIC_TYPESENSE_COLLECTION_NAME }}
             - name: Publish website
-              uses: rivet-dev/deploy-to-bucket@main
+              uses: rivet-dev/deploy-to-bucket@v0.1.0
               with:
-                  cloudflare-token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-                  zone-id: ${{ vars.CLOUDFLARE_ZONE_ID }}
-                  worker: ${{ vars.WEBSITE_WORKER }}
                   access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
                   secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
                   account-id: ${{ vars.R2_ACCOUNT_ID }}
