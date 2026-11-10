@@ -2,7 +2,7 @@
   "name": "deploy-to-bucket",
   "private": true,
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
     "typecheck": "tsc -p tsconfig.test.json && tsc -p tsconfig.worker.json --noEmit",

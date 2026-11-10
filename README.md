@@ -2,12 +2,12 @@
 
 ## What is this?
 
-A GitHub Action that publishes static websites to your own Cloudflare R2 bucket and serves them through a Worker.
+Deploy static websites from CI to Cloudflare R2.
 
-- Build your frontend directly in CI.
-- No reliance on flaky, overpriced build infrastructure.
-- Improve build speeds with better caching, faster machines, and self-hosted CI.
-- Stored in object storage, cheap to serve.
+- Build directly in CI.
+- Avoid flaky, expensive build infrastructure.
+- Use better caching, faster machines, and self-hosted runners.
+- Serve cheaply from object storage.
 
 ## Agent prompt
 
@@ -22,11 +22,15 @@ credentials. Otherwise, ask me for the credentials or access you need.
 
 ## Quickstart
 
-1. Have your agent complete the [one-time setup guide](SETUP.md). It provisions hosting and creates R2 Object Read & Write credentials scoped to one bucket. CI gets no Cloudflare management permissions.
+1. Follow the [one-time setup guide](SETUP.md) to create the bucket, Worker, wildcard routing, and bucket-scoped CI credentials.
 2. Save the two secrets and four repository variables listed in the setup guide.
 3. Add the workflows below and adjust your build command and output directory. Use `@v0.1.0`, or pin a release commit SHA.
 
-**Preview HTTPS:** Universal SSL covers first-level previews such as `pr-42.gameinc.io`. Nested previews such as `pr-42.preview.gameinc.io` need Advanced Certificate Manager (ACM), or another certificate covering `*.preview.gameinc.io`. The DNS wildcard alone does not provide certificate coverage.
+### ACM requirement
+
+**Nested preview hostnames require ACM or equivalent certificate coverage.** For `pr-42.preview.gameinc.io`, provision a certificate for `*.preview.gameinc.io`. Cloudflare Universal SSL already covers first-level names such as `pr-42.gameinc.io`; a wildcard DNS record alone does not extend that coverage.
+
+### Workflows
 
 **`.github/workflows/website.yml`**
 
@@ -100,6 +104,8 @@ jobs:
 
 Keep the same concurrency group and hostname in both workflows. Cleanup runs without a checkout or build.
 
-`main` publishes to your domain; PRs get preview URLs and a comment. Closing a PR deletes its files and release pointers, so its URLs return 404. The action only changes objects in the preconfigured bucket; hosting infrastructure stays in place.
+For `rivet-dev/website`, follow the [integration guide](SETUP.md#4-integrate-and-verify).
 
-For `rivet-dev/website`, use the [pnpm deployment](examples/website.yml) and [cleanup](examples/website-cleanup.yml) workflows, and copy the [routing adapter](examples/website-config.ts) to `scripts/website-config.ts` to preserve redirects and headers. Build in CI, then pass `config: website-routing.json` to the action. Keep Railway serving production until the test hostname is verified; the MCP backend must remain running.
+## License
+
+[MIT](LICENSE).
